@@ -21,33 +21,82 @@
 #include "spdk/log.h"
 #include <stdint.h>
 #include <stddef.h> 
-#include <inttypes.h>
+
 #include <sys/ipc.h>
 #include <sys/msg.h>
 #include <sys/shm.h>
 
 #include <sys/time.h>
 
-#define SHM_READ_KEY 0x11
-#define SHM_WRITE_KEY 0x22
-#define MSG_KEY                 1000  //  SPDK Mock과 동일한 키 사용
-
+#define SHM_READ_KEY 0x1000
+#define SHM_WRITE_KEY 0x1022
+#define MSG_KEY                 1002  //  SPDK Mock과 동일한 키 사용
 #define SHM_SIZE                131072 // 공유 메모리 크기 
+#define NUM_SLOTS    16 
 
+//-----------------------------
+typedef struct __attribute__((packed)) bpe_msg_req {
+    long      msg_type;
+    uint32_t  total_len;
+    uint64_t  req_id;
+    uint32_t  slot;
+} bpe_msg_req;
 
-struct msg_req {
-    long      msg_type;   // == 1
-    uint32_t  total_len;  // 이번 요청의 유효 바이트
-    int       cdw13;      // 슬롯 식별자
-};
-
-/* 응답: msg_type=2, 기존과 동일(슬롯 + 결과 길이) */
-struct msg_resp {
-    long      msg_type;   // == 2
-    int       cdw13;
+typedef struct __attribute__((packed)) bpe_msg_resp {
+    long      msg_type;
     uint32_t  byte_size;
+    uint64_t  req_id;
+    uint32_t  slot;
+} bpe_msg_resp;
+
+enum {
+    BPE_REQ_MSZ  = (int)sizeof(bpe_msg_req)  - (int)sizeof(long),
+    BPE_RESP_MSZ = (int)sizeof(bpe_msg_resp) - (int)sizeof(long),
 };
 
+
+static struct spdk_spinlock g_ticket_lock;   // ticket_*가 쓰는 락이라고 가정
+static bool g_ticket_inited;
+
+struct bpe_ticket {
+    uint64_t                    req_id;
+    struct spdk_nvmf_request   *req;
+    uint64_t                    deadline_tsc;
+    bool                        in_use;
+};
+
+void ticket_init_once(void)
+{
+    if (g_ticket_inited) return;
+    spdk_spin_init(&g_ticket_lock);          
+    g_ticket_inited = true;
+}
+//-----------------------------
+static char *g_shm_read[NUM_SLOTS];
+static char *g_shm_write[NUM_SLOTS];
+//-----------------------------
+#define BPE_MAX_TICKETS 4096
+
+static int   g_msg_id        = -1;
+static struct spdk_poller *g_bpe_poller = NULL;
+
+/* 티켓 테이블 (아주 단순한 선형탐색) */
+static struct bpe_ticket g_tickets[BPE_MAX_TICKETS];
+static uint64_t g_next_req_id = 1;
+//-----------------------------
+
+/* 유틸 */
+static inline uint64_t
+ticks_now(void)
+{
+    return spdk_get_ticks();
+}
+static inline uint64_t
+us_to_ticks(uint64_t us)
+{
+    uint64_t hz = spdk_get_ticks_hz();
+    return (hz * us) / 1000000ULL;
+}
 
 static inline double now_us(void) {
     struct timeval tv;
@@ -55,121 +104,135 @@ static inline double now_us(void) {
     return tv.tv_sec * 1e6 + tv.tv_usec;
 }
 
-
 static void
 nvmf_ctrlr_process_io_cmd_resubmit(void *arg);
-
 static bool
 nvmf_bdev_ctrlr_lba_in_range(uint64_t bdev_num_blocks, uint64_t io_start_lba,
                              uint64_t io_num_blocks);
-
 static void
 nvmf_bdev_ctrl_queue_io(struct spdk_nvmf_request *req, struct spdk_bdev *bdev,
                         struct spdk_io_channel *ch, spdk_bdev_io_wait_cb cb_fn, void *cb_arg);
-// 공유 메모리 초기화
 
-char* init_shm(int shm_key) {
-    int shm_id = shmget(shm_key, SHM_SIZE, IPC_CREAT | 0666);
-    if (shm_id < 0) {
-        perror("공유 메모리 생성 실패");
-        exit(1);
-    }
-    char* shm_ptr = (char*)shmat(shm_id, NULL, 0);
-    if (shm_ptr == (char *)(-1)) {
-        perror("공유 메모리 연결 실패");
-        exit(1);
-    }
-    return shm_ptr;
-}
-
-
-
-void send_bpe_request_omp(int msg_id, int cdw13, uint32_t total_len)
+char* init_shm(int shm_key)
 {
-    struct msg_req m = { .msg_type = 1, .total_len = total_len, .cdw13 = cdw13 };
-    __sync_synchronize();  // SHM에 복사 끝났음을 보장
-    if (msgsnd(msg_id, &m, sizeof(m) - sizeof(long), 0) == -1) {
-        perror("[SPDK] BPE 요청 메시지 전송 실패");
-    } else {
-        //printf("[SPDK] BPE 요청 전송: cdw13=%d, total_len=%u\n", cdw13, total_len);
+    int id = shmget(shm_key, SHM_SIZE, IPC_CREAT | 0660);
+    if (id < 0) {
+        SPDK_ERRLOG("shmget(%x) failed: %s\n", shm_key, spdk_strerror(errno));
+        return NULL;
+    }
+    void *p = shmat(id, NULL, 0);
+    if (p == (void *)-1) {
+        SPDK_ERRLOG("shmat(%x) failed: %s\n", shm_key, spdk_strerror(errno));
+        return NULL;
+    }
+    return (char *)p;
+}
+
+void bpe_ipc_init_once(void)
+{
+    static bool inited = false;
+    if (inited) return;
+    ticket_init_once();   
+    g_msg_id = msgget(MSG_KEY, IPC_CREAT | 0660);
+    if (g_msg_id < 0) {
+        SPDK_ERRLOG("msgget failed: %s\n", spdk_strerror(errno));
+        abort();
+    }
+    for (uint32_t s = 0; s < NUM_SLOTS; s++) {
+        int idr = shmget(SHM_READ_KEY  + s, SHM_SIZE, IPC_CREAT | 0660);
+        int idw = shmget(SHM_WRITE_KEY + s, SHM_SIZE, IPC_CREAT | 0660);
+        if (idr < 0 || idw < 0) {
+            SPDK_ERRLOG("shmget failed slot %u: %s\n", s, spdk_strerror(errno));
+            abort();
+        }
+        void *pr = shmat(idr, NULL, 0);
+        void *pw = shmat(idw, NULL, 0);
+        if (pr == (void*)-1 || pw == (void*)-1) {
+            SPDK_ERRLOG("shmat failed slot %u: %s\n", s, spdk_strerror(errno));
+            abort();
+        }
+        g_shm_read[s]  = (char*)pr;
+        g_shm_write[s] = (char*)pw;
+    }
+    inited = true;
+}
+
+bool ticket_insert(uint64_t req_id, struct spdk_nvmf_request *req, uint64_t timeout_us)
+{
+    uint64_t deadline = ticks_now() + us_to_ticks(timeout_us);
+    spdk_spin_lock(&g_ticket_lock);
+    for (int i = 0; i < BPE_MAX_TICKETS; i++) {
+        if (!g_tickets[i].in_use) {
+            g_tickets[i].in_use = true;
+            g_tickets[i].req_id = req_id;
+            g_tickets[i].req = req;
+            g_tickets[i].deadline_tsc = deadline;
+            spdk_spin_unlock(&g_ticket_lock);
+            return true;
+        }
+    }
+    spdk_spin_unlock(&g_ticket_lock);
+    return false;
+}
+
+
+struct spdk_nvmf_request *ticket_take(uint64_t req_id)
+{
+    struct spdk_nvmf_request *req = NULL;
+    spdk_spin_lock(&g_ticket_lock);
+    for (int i = 0; i < BPE_MAX_TICKETS; i++) {
+        if (g_tickets[i].in_use && g_tickets[i].req_id == req_id) {
+            req = g_tickets[i].req;
+            g_tickets[i].in_use = false;
+            break;
+        }
+    }
+    spdk_spin_unlock(&g_ticket_lock);
+    return req;
+}
+
+void ticket_timeout_sweep(void)
+{
+    uint64_t now = ticks_now();
+    struct spdk_nvmf_request *expired[128];
+    int n = 0;
+
+    spdk_spin_lock(&g_ticket_lock);
+    for (int i = 0; i < BPE_MAX_TICKETS && n < (int)(sizeof(expired)/sizeof(expired[0])); i++) {
+        if (g_tickets[i].in_use && g_tickets[i].deadline_tsc <= now) {
+            expired[n++] = g_tickets[i].req;
+            g_tickets[i].in_use = false;
+        }
+    }
+    spdk_spin_unlock(&g_ticket_lock);
+
+    for (int i = 0; i < n; i++) {
+        struct spdk_nvmf_request *req = expired[i];
+        struct spdk_nvme_cpl *rsp = &req->rsp->nvme_cpl;
+        rsp->status.sct = SPDK_NVME_SCT_GENERIC;
+        rsp->status.sc  = SPDK_NVME_SC_INTERNAL_DEVICE_ERROR;
+        spdk_nvmf_request_complete(req);
     }
 }
 
-// BPE 응답 메시지 대기 및 확인
-// BPE 응답 메시지 수신 및 유효 바이트 길이 반환
-bool receive_bpe_response_omp(int msg_id, uint32_t *byte_size_out) {
-    struct msg_buffer {
-        long msg_type;
-        int cdw13;
-        uint32_t byte_size;
-    } response;
-
-    if (msgrcv(msg_id, &response, sizeof(response) - sizeof(long), 2, 0) == -1) {
-        //perror("[SPDK] BPE 응답 수신 실패");
-        return false;
+/* 비블로킹 송신 */
+int bpe_send_request_nb(uint64_t req_id, uint32_t total_len, uint32_t slot)
+{
+    bpe_msg_req m = {
+        .msg_type  = 1,
+        .total_len = total_len,
+        .req_id    = req_id,
+        .slot      = slot,
+    };
+    __sync_synchronize();  // SHM_READ에 복사 후 가시성 보장
+    if (msgsnd(g_msg_id, &m, BPE_REQ_MSZ, IPC_NOWAIT) == -1) {
+        if (errno == EAGAIN) return -EAGAIN;
+        SPDK_ERRLOG("msgsnd failed: %s\n", spdk_strerror(errno));
+        return -1;
     }
-
-
-    *byte_size_out = response.byte_size;
-    //printf("[SPDK] BPE 응답 수신 완료: cdw13=%d, byte_size=%u\n", response.cdw13, response.byte_size);
-    return true;
+    return 0;
 }
 
-
-/*
-char* init_shm_parallel(int shm_key) {
-    int shm_id = shmget(shm_key, SHM_SIZE, IPC_CREAT | 0666);
-    if (shm_id < 0) {
-        perror("공유 메모리 생성 실패");
-        exit(1);
-    }
-    char* shm_ptr = static_cast<char*>(shmat(shm_id, NULL, 0));
-    if (shm_ptr == reinterpret_cast<char*>(-1)) {
-        perror("공유 메모리 연결 실패");
-        exit(1);
-    }
-    return shm_ptr;
-}
-        */
-/*
-void send_bpe_request_parallel(int msg_id, int cdw13) {
-    struct msg_buffer {
-        long    msg_type;
-        int     cdw13;
-    } request;
-
-    request.msg_type = 1;    // BPE 요청
-    request.cdw13 = cdw13;
-
-    if (msgsnd(msg_id, &request, sizeof(request) - sizeof(long), 0) == -1) {
-        perror("[SPDK] BPE 요청 전송 실패");
-    } else {
-        printf("[SPDK] 요청 전송 완료 (cdw13: %d)\n", cdw13);
-    }
-}
-
-bool receive_bpe_response_parallel(int msg_id, int expected_cdw13) {
-    struct msg_buffer {
-        long    msg_type;
-        int     cdw13;
-    } response;
-
-    if (msgrcv(msg_id, &response, sizeof(response) - sizeof(long), 2, 0) == -1) {
-        perror("[SPDK] 응답 수신 실패");
-        return false;
-    }
-
-    if (response.cdw13 == expected_cdw13) {
-        printf("[SPDK] 응답 수신 완료 (cdw13: %d)\n", response.cdw13);
-        return true;
-    } else {
-        fprintf(stderr, "[SPDK] 잘못된 CDW13 응답 (기대: %d, 수신: %d)\n",
-                expected_cdw13, response.cdw13);
-        return false;
-    }
-}
-
-*/
 
 static bool
 nvmf_subsystem_bdev_io_type_supported(struct spdk_nvmf_subsystem *subsystem,
@@ -1262,98 +1325,125 @@ nvmf_bdev_ctrlr_zcopy_end(struct spdk_nvmf_request *req, bool commit)
         assert(rc == 0);
 }
 
+int bpe_response_poller(void *arg)
+{
+    bool did_work = false;
+    for (int k = 0; k < 8; k++) { //k는 배치 사이즈를 의미함 ~32 1번에 처리하는 배치사이즈
+        struct bpe_msg_resp r;
+        ssize_t n = msgrcv(g_msg_id, &r, BPE_RESP_MSZ, 2, IPC_NOWAIT);
+        
+        if (n < 0) {
+            if (errno == ENOMSG) break;
+            SPDK_ERRLOG("msgrcv failed: %s\n", spdk_strerror(errno));
+            break;
+        }
 
+        did_work = true;  // ★ 처리 발생 표시
+        
+        struct spdk_nvmf_request *req = ticket_take(r.req_id);
+        if (!req) continue;
+        //티켓 발행
+
+        printf("[READ-TS]  Req %" PRIu64 " slot=%u at %.3f us (size=%u)\n", r.req_id, r.slot, now_us(), r.byte_size);
+        uint32_t slot = r.slot % NUM_SLOTS;
+        char *shm_write = g_shm_write[slot];
+
+        __sync_synchronize(); /* 워커가 SHM_WRITE에 쓴 후 가시성 확보 */
+
+        uint32_t valid_len = r.byte_size;
+        if (valid_len > SHM_SIZE) valid_len = SHM_SIZE;
+
+        uint32_t copied = 0;
+        for (int i = 0; i < req->iovcnt && copied < valid_len; i++) {
+            uint32_t to_copy = spdk_min(valid_len - copied, (uint32_t)req->iov[i].iov_len);
+            memcpy(req->iov[i].iov_base, shm_write + copied, to_copy);
+            copied += to_copy;
+        }
+
+        /* 가변 응답 설계라면 공유 메모리를 통해서 받은 값으로 req->length 수정해야해 */
+        req->length = copied;
+
+        struct spdk_nvme_cpl *rsp = &req->rsp->nvme_cpl;
+        rsp->status.sct = 0;
+        rsp->status.sc  = 0;
+        spdk_nvmf_request_complete(req);
+    }
+
+    ticket_timeout_sweep();
+    //return SPDK_POLLER_IDLE;
+    return did_work ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE; // ★
+}
 
 
 static void
 nvmf_bdev_ctrlr_bpe_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 {
         struct spdk_nvmf_request *req = cb_arg;
-    struct spdk_nvme_cpl *response = &req->rsp->nvme_cpl;
-    int sc = 0, sct = 0;
-    uint32_t cdw0 = 0;
 
-    struct iovec *iovs;
-    int iovcnt = 0;
-    //  SPDK에서 iov 배열 가져오기
-
-    spdk_bdev_io_get_iovec(bdev_io, &iovs, &iovcnt);
-
-        uint32_t cdw13 = req->cmd->nvme_cmd.cdw13;
-    //  데이터 크기 확인
-    uint32_t total_len = 0;
-    for (int i = 0; i < iovcnt; i++) {
-        total_len += iovs[i].iov_len;
-    }
-    if (total_len > 0) {
-        //  malloc 버퍼 할당
-        char *buffer = malloc(total_len);
-                //char *buffer = spdk_malloc(total_len, 0x1000, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
-        if (!buffer) {
-            SPDK_ERRLOG("Failed to allocate memory for buffer\n");
-            sc = SPDK_NVME_SC_INTERNAL_DEVICE_ERROR;
-            goto complete;
+        if (!success) {
+                /* 기존 실패 경로 그대로 */
+                uint32_t cdw0; int sct, sc;
+                spdk_bdev_io_get_nvme_status(bdev_io, &cdw0, &sct, &sc);
+                req->rsp->nvme_cpl.cdw0 = cdw0;
+                req->rsp->nvme_cpl.status.sct = sct;
+                req->rsp->nvme_cpl.status.sc  = sc;
+                spdk_nvmf_request_complete(req);
+                spdk_bdev_free_io(bdev_io);
+                return;
         }
+
+        /* 0) IPC 리소스/폴러 1회 초기화 */
+        bpe_ipc_init_once();
+        if (!g_bpe_poller) {
+                /* 이 스레드에서 응답을 폴링 */
+                g_bpe_poller = SPDK_POLLER_REGISTER(bpe_response_poller, NULL, 0 /*us*/);
+        }
+
+        uint32_t slot = req->cmd->nvme_cmd.cdw13;
+        char *shm_read = g_shm_read[slot];
+
+        struct iovec *iovs; int iovcnt = 0;
+        
+        spdk_bdev_io_get_iovec(bdev_io, &iovs, &iovcnt);
+
+        uint32_t total_len = 0;
+        for (int i = 0; i < iovcnt; i++) total_len += iovs[i].iov_len;
+        total_len = spdk_min(req->length, SHM_SIZE);
+        
 
         //  데이터 복사
-        uint32_t offset = 0;
-        for (int i = 0; i < iovcnt; i++) {
-            memcpy(buffer + offset, iovs[i].iov_base, iovs[i].iov_len);
-            offset += iovs[i].iov_len;
+        uint32_t off = 0;
+        for (int i = 0; i < iovcnt && off < total_len; i++) {
+                uint32_t to_copy = spdk_min((uint32_t)iovs[i].iov_len, total_len - off);
+                memcpy(shm_read + off, iovs[i].iov_base, to_copy);
+                off += to_copy;
+        }
+        /* 2) 티켓 생성(5초 타임아웃 예시) + 비블로킹 전송 */
+        uint64_t req_id = __atomic_fetch_add(&g_next_req_id, 1, __ATOMIC_RELAXED);
+        if (!ticket_insert(req_id, req, /*timeout_us=*/5000000ULL)) {
+                /* 큐 부족 → 에러 */
+                struct spdk_nvme_cpl *rsp = &req->rsp->nvme_cpl;
+                rsp->status.sct = SPDK_NVME_SCT_GENERIC;
+                rsp->status.sc  = SPDK_NVME_SC_INTERNAL_DEVICE_ERROR;
+                spdk_nvmf_request_complete(req);
+                spdk_bdev_free_io(bdev_io);
+                return;
+        }
+        printf("[WRITE-TS] Req %" PRIu64 " slot=%u at %.3f us\n", req_id, slot, now_us());
+        
+        int rc = bpe_send_request_nb(req_id, off, slot);
+        if (rc != 0) {
+                /* 전송 실패 → 에러 반환 후 티켓 회수 */
+                (void)ticket_take(req_id);
+                struct spdk_nvme_cpl *rsp = &req->rsp->nvme_cpl;
+                rsp->status.sct = SPDK_NVME_SCT_GENERIC;
+                rsp->status.sc  = SPDK_NVME_SC_INTERNAL_DEVICE_ERROR;
+                spdk_nvmf_request_complete(req);
+                spdk_bdev_free_io(bdev_io);
+                return;
         }
 
-        //  공유 메모리 초기화 및 공유 메모리로 복사 buffer -> 공유 메모리 
-                char *shm_write_ptr = init_shm(SHM_WRITE_KEY+cdw13);
-                char *shm_read_ptr = init_shm(SHM_READ_KEY+cdw13);
-                memcpy(shm_read_ptr, buffer, total_len);
-                //fwrite(buffer, 1, total_len, stdout);
-
-                int msg_id = msgget(MSG_KEY, 0666 | IPC_CREAT);
-                printf("[WRITE-TS] %.3f us\n", now_us()); 
-        	send_bpe_request_omp(msg_id, cdw13, total_len);
-
-                uint32_t valid_len = 0;
-                receive_bpe_response_omp(msg_id, &valid_len);
-                printf("[READ-TS] %.3f us\n", now_us()); 
-
-                //  공유 메모리(shm_write_ptr) → req->iov 복사
-                uint32_t copied_to_iov = 0;
-                for (int i = 0; i < req->iovcnt && copied_to_iov < valid_len; i++) {
-                        uint32_t to_copy = spdk_min(valid_len - copied_to_iov, req->iov[i].iov_len);
-                        memcpy(req->iov[i].iov_base, shm_write_ptr + copied_to_iov, to_copy);
-                        copied_to_iov += to_copy;
-                }
-
-                //fwrite(shm_write_ptr, 1, valid_len, stdout);
-                req->length = valid_len;
-                free(buffer);
-
-
-    }
-
-    if (spdk_unlikely(req->first_fused)) {
-        struct spdk_nvmf_request *first_req = req->first_fused_req;
-        struct spdk_nvme_cpl *first_response = &first_req->rsp->nvme_cpl;
-        int first_sc = 0, first_sct = 0;
-
-        spdk_bdev_io_get_nvme_fused_status(bdev_io, &cdw0, &first_sct, &first_sc, &sct, &sc);
-        first_response->cdw0 = cdw0;
-        first_response->status.sc = first_sc;
-        first_response->status.sct = first_sct;
-        spdk_nvmf_request_complete(first_req);
-        req->first_fused_req = NULL;
-        req->first_fused = false;
-    } else {
-        spdk_bdev_io_get_nvme_status(bdev_io, &cdw0, &sct, &sc);
-    }
-
-complete:
-    response->cdw0 = cdw0;
-    response->status.sc = sc;
-    response->status.sct = sct;
-
-    spdk_nvmf_request_complete(req);
-
+    /* 3) 여기서 ‘응답 대기’를 하지 않는다 (비동기). */
     spdk_bdev_free_io(bdev_io);
 }
 
@@ -1369,6 +1459,7 @@ nvmf_bdev_ctrlr_BPE_tokenize_cmd(struct spdk_bdev *bdev,
                 .memory_domain_ctx = req->memory_domain_ctx,
                 .accel_sequence = req->accel_sequence,
         };
+        //printf("[Host -> SPDK] IOCTL 명령 수신 및 명령 파싱 체크포인트 : %.3f µs\n", end);
 
         uint64_t bdev_num_blocks = spdk_bdev_get_num_blocks(bdev);
         uint32_t block_size = spdk_bdev_desc_get_block_size(desc);
@@ -1382,13 +1473,12 @@ nvmf_bdev_ctrlr_BPE_tokenize_cmd(struct spdk_bdev *bdev,
         nvmf_bdev_ctrlr_get_rw_ext_params(cmd, &opts);
 
         if (spdk_unlikely(!nvmf_bdev_ctrlr_lba_in_range(bdev_num_blocks, start_lba, num_blocks))) {
-                SPDK_NOTICELOG("start_lba: %lu, num_blocks: %lu, bdev_num_blocks: %lu\n", start_lba, num_blocks, bdev_num_blocks);
                 SPDK_ERRLOG("end of media\n");
                 rsp->status.sct = SPDK_NVME_SCT_GENERIC;
                 rsp->status.sc = SPDK_NVME_SC_LBA_OUT_OF_RANGE;
                 return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
         }
-
+        
         if (spdk_unlikely(num_blocks * block_size > req->length)) {
                 SPDK_ERRLOG("Read NLB %" PRIu64 " * block size %" PRIu32 " > SGL length %" PRIu32 "\n",
                             num_blocks, block_size, req->length);
@@ -1396,7 +1486,7 @@ nvmf_bdev_ctrlr_BPE_tokenize_cmd(struct spdk_bdev *bdev,
                 rsp->status.sc = SPDK_NVME_SC_DATA_SGL_LENGTH_INVALID;
                 return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
         }
-
+        
         assert(!spdk_nvmf_request_using_zcopy(req));
 
 
