@@ -4,6 +4,7 @@
 [submodule "storage/spdk"]
 	path = storage/spdk
 	url = https://github.com/spdk/spdk.git
+	ignore = dirty
 [submodule "compute/third_party/liburing"]
 	path = compute/third_party/liburing
 	url = https://github.com/axboe/liburing.git
