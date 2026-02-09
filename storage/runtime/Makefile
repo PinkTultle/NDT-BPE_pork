@@ -2,9 +2,11 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -Iinclude -lpthread -ldl -lrt -g
 
-# 라이브러리 디렉토리 설정 (기존 빌드 방식 반영)
-LIB_DIR = /home/doogunwo/Desktop/tokenizers-0.20.3/tokenizers/tokenizers-cpp/build
+# 라이브러리 디렉토리 설정 (NDT-BPE 내부 토크나이저 의존)
+TOKENIZERS_DIR = ../../compute/third_party/tokenizers-cpp
+LIB_DIR = $(TOKENIZERS_DIR)/build
 LIBS = -L$(LIB_DIR) -ltokenizers_cpp -ltokenizers_c -lpthread -ldl
+RPATH = -Wl,-rpath,$(abspath $(LIB_DIR))
 
 # 디렉토리 설정
 SRC_DIR = src/
@@ -13,20 +15,24 @@ BIN_DIR = bin
 MODEL_DIR = model
 
 # 소스 파일 목록
-SRCS = $(wildcard $(SRC_DIR)/*.cpp)
+SRCS = $(filter-out $(SRC_DIR)/main2.cpp, $(wildcard $(SRC_DIR)/*.cpp))
 
 # 오브젝트 파일 목록
 OBJS = $(patsubst $(SRC_DIR)/%.cpp, $(OBJ_DIR)/%.o, $(SRCS))
 
 # 실행 파일
 TARGET = $(BIN_DIR)/bpe_process
+TARGET_MAIN2 = $(BIN_DIR)/bpe_process_main2
 
 # 기본 빌드 타겟
-all: $(TARGET)
+all: $(TARGET) $(TARGET_MAIN2)
 
 # 실행 파일 빌드 규칙 (링크 시 추가 라이브러리 적용)
 $(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) $^ -o $@ $(LIBS)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LIBS) $(RPATH)
+
+$(TARGET_MAIN2): $(OBJ_DIR)/main2.o $(OBJ_DIR)/common.o $(OBJ_DIR)/bpe_tokenizer.o
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LIBS) $(RPATH)
 
 # 개별 오브젝트 파일 빌드 규칙
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
@@ -35,7 +41,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 
 # 클린업 (오브젝트 파일 및 실행 파일 제거)
 clean:
-	rm -rf $(OBJ_DIR)/*.o $(TARGET)
+	rm -rf $(OBJ_DIR)/*.o $(TARGET) $(TARGET_MAIN2)
 
 # 공유 메모리 삭제 (디버깅을 위한 추가 명령어)
 clean_shm:

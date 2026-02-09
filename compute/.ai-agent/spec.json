@@ -1,6 +1,6 @@
 {
   "doc_version": "1.0.0",
-  "last_updated": "2026-02-03",
+  "last_updated": "2026-02-09",
   "module": "NDT-BPE/compute",
   "purpose": "Host-side compute support for NDT-BPE: file extent scheduling (FIEMAP), metadata area allocation (fallocate+mmap), and NVMe passthrough submission via io_uring.",
   "goals": [
@@ -33,12 +33,13 @@
           "compute/include/fallocate.h",
           "compute/src/fallocate.cpp"
         ],
-        "status": "partially implemented",
+        "status": "implemented",
         "details": [
           "Allocates metadata file with posix_fallocate.",
           "Maps metadata with mmap (MAP_SHARED) and supports zero-fill.",
           "Releases resources in destructor via free_metadata (RAII).",
-          "Converts metadata segments to NvmePassthruCmd vector."
+          "Converts metadata segments to NvmePassthruCmd vector.",
+          "Supports resizing via advocate_metadata with optional zero-fill for expanded range."
         ]
       },
       {
@@ -69,11 +70,6 @@
       }
     ],
     "not_implemented_or_pending": [
-      {
-        "item": "ffilesystem::advocate_metadata",
-        "declared_in": "compute/include/fallocate.h",
-        "note": "Declared but no definition currently in compute/src/fallocate.cpp."
-      },
       {
         "item": "End-to-end executable integration",
         "note": "compute currently builds a static library only; no runtime main/test target in this directory."
@@ -112,7 +108,6 @@
     "No unit tests in compute directory yet for FIEMAP edge cases (sparse files, unwritten extents, fragmentation)."
   ],
   "next_recommended_steps": [
-    "Implement or remove ffilesystem::advocate_metadata to keep header/source parity.",
     "Add small unit/integration tests for fiemap_schedule (including sparse/fragmented files).",
     "Add a minimal compute demo executable that wires: FIEMAP -> metadata -> nvme passthrough.",
     "Document ABI/field contracts for NvmePassthruCmd usage (cdw10-15 semantics)."

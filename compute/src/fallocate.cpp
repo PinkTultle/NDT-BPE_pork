@@ -19,7 +19,7 @@ constexpr std::size_t round_up(std::size_t x, std::size_t unit) noexcept {
 } // namespace
 
 ffilesystem::~ffilesystem() {
-    free_metadata();
+    free_metadata();    
 }
 
 void ffilesystem::allocate_metadata(bool zero) {
@@ -71,6 +71,89 @@ void ffilesystem::free_metadata() noexcept {
     }
 
     metadata_size_ = 0;
+}
+
+void ffilesystem::advocate_metadata(std::size_t new_size, bool zero) {
+    if (new_size == 0) {
+        free_metadata();
+        return;
+    }
+
+    const std::size_t rounded = round_up(new_size, ALIGN_BYTES);
+
+    if (metadata_ptr_ == nullptr) {
+        metadata_size_ = rounded;
+        const int fd = ::open(metadata_file_path_.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+        if (fd < 0) {
+            throw std::system_error(errno, std::generic_category(), "open metadata file failed");
+        }
+
+        const int alloc_rc = ::posix_fallocate(fd, 0, static_cast<off_t>(metadata_size_));
+        if (alloc_rc != 0) {
+            ::close(fd);
+            throw std::system_error(alloc_rc, std::generic_category(), "posix_fallocate failed");
+        }
+
+        void* ptr = ::mmap(nullptr, metadata_size_, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (ptr == MAP_FAILED) {
+            const int saved_errno = errno;
+            ::close(fd);
+            throw std::system_error(saved_errno, std::generic_category(), "mmap metadata failed");
+        }
+
+        metadata_fd_ = fd;
+        metadata_ptr_ = ptr;
+        if (zero) {
+            std::memset(metadata_ptr_, 0, metadata_size_);
+            (void)::msync(metadata_ptr_, metadata_size_, MS_SYNC);
+        }
+        return;
+    }
+
+    if (metadata_fd_ < 0) {
+        throw std::logic_error("metadata fd is invalid");
+    }
+
+    if (rounded == metadata_size_) {
+        if (zero) {
+            std::memset(metadata_ptr_, 0, metadata_size_);
+            (void)::msync(metadata_ptr_, metadata_size_, MS_SYNC);
+        }
+        return;
+    }
+
+    const std::size_t old_size = metadata_size_;
+
+    if (rounded > metadata_size_) {
+        const int alloc_rc = ::posix_fallocate(metadata_fd_, 0, static_cast<off_t>(rounded));
+        if (alloc_rc != 0) {
+            throw std::system_error(alloc_rc, std::generic_category(), "posix_fallocate failed");
+        }
+    } else {
+        if (::ftruncate(metadata_fd_, static_cast<off_t>(rounded)) != 0) {
+            throw std::system_error(errno, std::generic_category(), "ftruncate failed");
+        }
+    }
+
+    if (metadata_ptr_ != nullptr) {
+        (void)::msync(metadata_ptr_, metadata_size_, MS_SYNC);
+        (void)::munmap(metadata_ptr_, metadata_size_);
+        metadata_ptr_ = nullptr;
+    }
+
+    void* ptr = ::mmap(nullptr, rounded, PROT_READ | PROT_WRITE, MAP_SHARED, metadata_fd_, 0);
+    if (ptr == MAP_FAILED) {
+        const int saved_errno = errno;
+        throw std::system_error(saved_errno, std::generic_category(), "mmap metadata failed");
+    }
+
+    metadata_ptr_ = ptr;
+    metadata_size_ = rounded;
+
+    if (zero && rounded > old_size) {
+        std::memset(static_cast<char*>(metadata_ptr_) + old_size, 0, rounded - old_size);
+        (void)::msync(metadata_ptr_, metadata_size_, MS_SYNC);
+    }
 }
 
 void ffilesystem::convert_metadata_to_nvme_cmds(std::vector<NvmePassthruCmd>& out_cmds) const {
