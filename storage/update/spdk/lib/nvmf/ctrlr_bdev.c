@@ -55,17 +55,31 @@ enum {
 };
 
 
-static struct spdk_spinlock g_ticket_lock;   // ticket_*가 쓰는 락이라고 가정
+static struct spdk_spinlock g_ticket_lock;   // bpe_ticket_*가 쓰는 락이라고 가정
 static bool g_ticket_inited;
 
 struct bpe_ticket {
     uint64_t                    req_id;
     struct spdk_nvmf_request   *req;
+    struct spdk_bdev           *bdev;
+    struct spdk_bdev_desc      *desc;
+    struct spdk_io_channel     *ch;
+    uint64_t                    write_start_lba;
+    uint64_t                    write_num_blocks;
     uint64_t                    deadline_tsc;
     bool                        in_use;
 };
 
-void ticket_init_once(void)
+struct bpe_read_ctx {
+    struct spdk_nvmf_request   *req;
+    struct spdk_bdev           *bdev;
+    struct spdk_bdev_desc      *desc;
+    struct spdk_io_channel     *ch;
+    uint64_t                    write_start_lba;
+    uint64_t                    write_num_blocks;
+};
+
+static void bpe_ticket_init_once(void)
 {
     if (g_ticket_inited) return;
     spdk_spin_init(&g_ticket_lock);          
@@ -132,7 +146,7 @@ void bpe_ipc_init_once(void)
 {
     static bool inited = false;
     if (inited) return;
-    ticket_init_once();   
+    bpe_ticket_init_once();   
     g_msg_id = msgget(MSG_KEY, IPC_CREAT | 0660);
     if (g_msg_id < 0) {
         SPDK_ERRLOG("msgget failed: %s\n", spdk_strerror(errno));
@@ -157,7 +171,9 @@ void bpe_ipc_init_once(void)
     inited = true;
 }
 
-bool ticket_insert(uint64_t req_id, struct spdk_nvmf_request *req, uint64_t timeout_us)
+static bool bpe_ticket_insert(uint64_t req_id, struct spdk_nvmf_request *req, struct spdk_bdev *bdev,
+                              struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+                              uint64_t write_start_lba, uint64_t write_num_blocks, uint64_t timeout_us)
 {
     uint64_t deadline = ticks_now() + us_to_ticks(timeout_us);
     spdk_spin_lock(&g_ticket_lock);
@@ -166,6 +182,11 @@ bool ticket_insert(uint64_t req_id, struct spdk_nvmf_request *req, uint64_t time
             g_tickets[i].in_use = true;
             g_tickets[i].req_id = req_id;
             g_tickets[i].req = req;
+            g_tickets[i].bdev = bdev;
+            g_tickets[i].desc = desc;
+            g_tickets[i].ch = ch;
+            g_tickets[i].write_start_lba = write_start_lba;
+            g_tickets[i].write_num_blocks = write_num_blocks;
             g_tickets[i].deadline_tsc = deadline;
             spdk_spin_unlock(&g_ticket_lock);
             return true;
@@ -176,22 +197,23 @@ bool ticket_insert(uint64_t req_id, struct spdk_nvmf_request *req, uint64_t time
 }
 
 
-struct spdk_nvmf_request *ticket_take(uint64_t req_id)
+static bool bpe_ticket_take(uint64_t req_id, struct bpe_ticket *ticket)
 {
-    struct spdk_nvmf_request *req = NULL;
+    bool found = false;
     spdk_spin_lock(&g_ticket_lock);
     for (int i = 0; i < BPE_MAX_TICKETS; i++) {
         if (g_tickets[i].in_use && g_tickets[i].req_id == req_id) {
-            req = g_tickets[i].req;
+            *ticket = g_tickets[i];
             g_tickets[i].in_use = false;
+            found = true;
             break;
         }
     }
     spdk_spin_unlock(&g_ticket_lock);
-    return req;
+    return found;
 }
 
-void ticket_timeout_sweep(void)
+static void bpe_ticket_timeout_sweep(void)
 {
     uint64_t now = ticks_now();
     struct spdk_nvmf_request *expired[128];
@@ -492,6 +514,15 @@ nvmf_bdev_ctrlr_get_rw_params(const struct spdk_nvme_cmd *cmd, uint64_t *start_l
 
         /* NLB: CDW12 bits 15:00, 0's based */
         *num_blocks = (from_le32(&cmd->cdw12) & 0xFFFFu) + 1;
+}
+
+static void
+nvmf_bdev_ctrlr_get_bpe_write_params(const struct spdk_nvme_cmd *cmd, uint64_t *start_lba,
+                                     uint64_t *num_blocks)
+{
+        *start_lba = from_le32(&cmd->cdw14);
+        /* Custom path: cdw15 is NLB-1, so convert to block count. */
+        *num_blocks = (uint64_t)from_le32(&cmd->cdw15) + 1;
 }
 
 static void
@@ -1340,8 +1371,11 @@ int bpe_response_poller(void *arg)
 
         did_work = true;  // ★ 처리 발생 표시
         
-        struct spdk_nvmf_request *req = ticket_take(r.req_id);
-        if (!req) continue;
+        struct bpe_ticket ticket = {};
+        if (!bpe_ticket_take(r.req_id, &ticket)) {
+            continue;
+        }
+        struct spdk_nvmf_request *req = ticket.req;
         //티켓 발행
 
         printf("[READ-TS]  Req %" PRIu64 " slot=%u at %.3f us (size=%u)\n", r.req_id, r.slot, now_us(), r.byte_size);
@@ -1364,12 +1398,37 @@ int bpe_response_poller(void *arg)
         req->length = copied;
 
         struct spdk_nvme_cpl *rsp = &req->rsp->nvme_cpl;
-        rsp->status.sct = 0;
-        rsp->status.sc  = 0;
-        spdk_nvmf_request_complete(req);
+        uint32_t block_size = spdk_bdev_desc_get_block_size(ticket.desc);
+        uint64_t bdev_num_blocks = spdk_bdev_get_num_blocks(ticket.bdev);
+        struct spdk_bdev_ext_io_opts opts = {
+                .size = SPDK_SIZEOF(&opts, nvme_cdw13),
+                .memory_domain = req->memory_domain,
+                .memory_domain_ctx = req->memory_domain_ctx,
+                .accel_sequence = req->accel_sequence,
+        };
+        nvmf_bdev_ctrlr_get_rw_ext_params(&req->cmd->nvme_cmd, &opts);
+
+        if (ticket.write_num_blocks == 0 ||
+            !nvmf_bdev_ctrlr_lba_in_range(bdev_num_blocks, ticket.write_start_lba, ticket.write_num_blocks) ||
+            ticket.write_num_blocks * block_size > req->length) {
+                rsp->status.sct = SPDK_NVME_SCT_GENERIC;
+                rsp->status.sc  = SPDK_NVME_SC_DATA_SGL_LENGTH_INVALID;
+                spdk_nvmf_request_complete(req);
+                continue;
+        }
+
+        int rc = spdk_bdev_writev_blocks_ext(ticket.desc, ticket.ch, req->iov, req->iovcnt,
+                                             ticket.write_start_lba, ticket.write_num_blocks,
+                                             nvmf_bdev_ctrlr_complete_cmd, req, &opts);
+        if (spdk_unlikely(rc)) {
+                rsp->status.sct = SPDK_NVME_SCT_GENERIC;
+                rsp->status.sc  = SPDK_NVME_SC_INTERNAL_DEVICE_ERROR;
+                spdk_nvmf_request_complete(req);
+                continue;
+        }
     }
 
-    ticket_timeout_sweep();
+    bpe_ticket_timeout_sweep();
     //return SPDK_POLLER_IDLE;
     return did_work ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE; // ★
 }
@@ -1378,7 +1437,8 @@ int bpe_response_poller(void *arg)
 static void
 nvmf_bdev_ctrlr_bpe_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 {
-        struct spdk_nvmf_request *req = cb_arg;
+        struct bpe_read_ctx *ctx = cb_arg;
+        struct spdk_nvmf_request *req = ctx->req;
 
         if (!success) {
                 /* 기존 실패 경로 그대로 */
@@ -1389,6 +1449,7 @@ nvmf_bdev_ctrlr_bpe_complete(struct spdk_bdev_io *bdev_io, bool success, void *c
                 req->rsp->nvme_cpl.status.sc  = sc;
                 spdk_nvmf_request_complete(req);
                 spdk_bdev_free_io(bdev_io);
+                free(ctx);
                 return;
         }
 
@@ -1399,8 +1460,10 @@ nvmf_bdev_ctrlr_bpe_complete(struct spdk_bdev_io *bdev_io, bool success, void *c
                 g_bpe_poller = SPDK_POLLER_REGISTER(bpe_response_poller, NULL, 0 /*us*/);
         }
 
-        uint32_t slot = req->cmd->nvme_cmd.cdw13;
+        uint32_t slot = req->cmd->nvme_cmd.cdw13 % NUM_SLOTS;
         char *shm_read = g_shm_read[slot];
+        uint64_t write_start_lba = ctx->write_start_lba;
+        uint64_t write_num_blocks = ctx->write_num_blocks;
 
         struct iovec *iovs; int iovcnt = 0;
         
@@ -1420,13 +1483,15 @@ nvmf_bdev_ctrlr_bpe_complete(struct spdk_bdev_io *bdev_io, bool success, void *c
         }
         /* 2) 티켓 생성(5초 타임아웃 예시) + 비블로킹 전송 */
         uint64_t req_id = __atomic_fetch_add(&g_next_req_id, 1, __ATOMIC_RELAXED);
-        if (!ticket_insert(req_id, req, /*timeout_us=*/5000000ULL)) {
+        if (!bpe_ticket_insert(req_id, req, ctx->bdev, ctx->desc, ctx->ch,
+                               write_start_lba, write_num_blocks, /*timeout_us=*/5000000ULL)) {
                 /* 큐 부족 → 에러 */
                 struct spdk_nvme_cpl *rsp = &req->rsp->nvme_cpl;
                 rsp->status.sct = SPDK_NVME_SCT_GENERIC;
                 rsp->status.sc  = SPDK_NVME_SC_INTERNAL_DEVICE_ERROR;
                 spdk_nvmf_request_complete(req);
                 spdk_bdev_free_io(bdev_io);
+                free(ctx);
                 return;
         }
         printf("[WRITE-TS] Req %" PRIu64 " slot=%u at %.3f us\n", req_id, slot, now_us());
@@ -1434,17 +1499,20 @@ nvmf_bdev_ctrlr_bpe_complete(struct spdk_bdev_io *bdev_io, bool success, void *c
         int rc = bpe_send_request_nb(req_id, off, slot);
         if (rc != 0) {
                 /* 전송 실패 → 에러 반환 후 티켓 회수 */
-                (void)ticket_take(req_id);
+                struct bpe_ticket ticket = {};
+                (void)bpe_ticket_take(req_id, &ticket);
                 struct spdk_nvme_cpl *rsp = &req->rsp->nvme_cpl;
                 rsp->status.sct = SPDK_NVME_SCT_GENERIC;
                 rsp->status.sc  = SPDK_NVME_SC_INTERNAL_DEVICE_ERROR;
                 spdk_nvmf_request_complete(req);
                 spdk_bdev_free_io(bdev_io);
+                free(ctx);
                 return;
         }
 
     /* 3) 여기서 ‘응답 대기’를 하지 않는다 (비동기). */
     spdk_bdev_free_io(bdev_io);
+    free(ctx);
 }
 
 int 
@@ -1467,9 +1535,13 @@ nvmf_bdev_ctrlr_BPE_tokenize_cmd(struct spdk_bdev *bdev,
         struct spdk_nvme_cpl *rsp = &req->rsp->nvme_cpl;
         uint64_t start_lba;
         uint64_t num_blocks;
+        uint64_t write_start_lba;
+        uint64_t write_num_blocks;
+        struct bpe_read_ctx *ctx;
         int rc;
 
         nvmf_bdev_ctrlr_get_rw_params(cmd, &start_lba, &num_blocks);
+        nvmf_bdev_ctrlr_get_bpe_write_params(cmd, &write_start_lba, &write_num_blocks);
         nvmf_bdev_ctrlr_get_rw_ext_params(cmd, &opts);
 
         if (spdk_unlikely(!nvmf_bdev_ctrlr_lba_in_range(bdev_num_blocks, start_lba, num_blocks))) {
@@ -1486,14 +1558,35 @@ nvmf_bdev_ctrlr_BPE_tokenize_cmd(struct spdk_bdev *bdev,
                 rsp->status.sc = SPDK_NVME_SC_DATA_SGL_LENGTH_INVALID;
                 return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
         }
+        if (spdk_unlikely(write_num_blocks == 0 ||
+                          !nvmf_bdev_ctrlr_lba_in_range(bdev_num_blocks, write_start_lba, write_num_blocks))) {
+                SPDK_ERRLOG("Write target range invalid. slba=%" PRIu64 " nblocks=%" PRIu64 "\n",
+                            write_start_lba, write_num_blocks);
+                rsp->status.sct = SPDK_NVME_SCT_GENERIC;
+                rsp->status.sc = SPDK_NVME_SC_LBA_OUT_OF_RANGE;
+                return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
+        }
         
         assert(!spdk_nvmf_request_using_zcopy(req));
+        ctx = calloc(1, sizeof(*ctx));
+        if (ctx == NULL) {
+                rsp->status.sct = SPDK_NVME_SCT_GENERIC;
+                rsp->status.sc = SPDK_NVME_SC_INTERNAL_DEVICE_ERROR;
+                return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
+        }
+        ctx->req = req;
+        ctx->bdev = bdev;
+        ctx->desc = desc;
+        ctx->ch = ch;
+        ctx->write_start_lba = write_start_lba;
+        ctx->write_num_blocks = write_num_blocks;
 
 
         rc = spdk_bdev_readv_blocks_ext(desc, ch, req->iov, req->iovcnt, start_lba, num_blocks,
-                nvmf_bdev_ctrlr_bpe_complete, req, &opts);
+                nvmf_bdev_ctrlr_bpe_complete, ctx, &opts);
 
         if (spdk_unlikely(rc)) {
+                free(ctx);
                 if (rc == -ENOMEM) {
                         nvmf_bdev_ctrl_queue_io(req, bdev, ch, nvmf_ctrlr_process_io_cmd_resubmit, req);
                         return SPDK_NVMF_REQUEST_EXEC_STATUS_ASYNCHRONOUS;

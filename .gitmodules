@@ -4,3 +4,9 @@
 [submodule "storage/spdk"]
 	path = storage/spdk
 	url = https://github.com/spdk/spdk.git
+[submodule "compute/third_party/liburing"]
+	path = compute/third_party/liburing
+	url = https://github.com/axboe/liburing.git
+[submodule "compute/third_party/tokenizers-cpp"]
+	path = compute/third_party/tokenizers-cpp
+	url = https://github.com/mlc-ai/tokenizers-cpp.git

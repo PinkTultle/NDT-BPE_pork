@@ -1,0 +1,13 @@
+{
+    "endpoint" : "spdk/lib/nvmef/bdev_ctrlr.c",
+    "logic" : "nvmf_bdev_ctrlr_BPE_tokenize_cmd -> nvmf_bdev_ctrlr_bpe_complete -> bpe_response_poller -> nvmf_bdev_ctrlr_write_cmd",
+    "NVMe Custom Command 구조" :  "opcode=0xd4 , cdw10: SLBA for Read SSD ,cdw12: nblock for Read SSD, cdw14: SLBA for Write SSD, cdw15: nblock for Write SSD",
+    "설명" : "nvme 명령수신-> opcode(0xd4)에 맞는 함수 호출 -> cdw10, cdw12로 읽기 수행 -> 공유 메모리에 쓰기함 -> 메시지 큐 수신(토큰화 처리됨) -> 공유 메모리 읽기 -> 토큰화된거 cdw14, cdw15 영역에 쓰기함",
+    "티켓시스템" : {
+        "역할1" : "BPE 요청 보낼 때 req_id 발급하고, spdk_nvmf_request* 저장",
+        "역할2" : "메시지큐에서 같은 req_id가 나오면 req찾아 컴플리션 처리(현재)",
+        "구조" : "struct bpe_ticket { req_id, req, deadline_tsc, in_use",
+        "변경" : "bpe_ticket구조체에 Write에 필요한 정보들도 같이 보관해야함 ->  rc = spdk_bdev_writev_blocks_ext(desc, ch, req->iov, req->iovcnt, start_lba, num_blocks,nvmf_bdev_ctrlr_complete_cmd, req, &opts);"
+    }
+    
+}
