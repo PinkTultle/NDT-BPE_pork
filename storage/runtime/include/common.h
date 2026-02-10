@@ -12,6 +12,31 @@ constexpr key_t SHM_WRITE_KEY = 0x1022;
 constexpr key_t MSG_KEY = 1002;
 constexpr std::size_t SHM_SIZE = 131072; // 128 KiB
 constexpr std::size_t NUM_SLOTS = 16;
+constexpr key_t STATS_SHM_KEY = 0x2000;
+constexpr std::size_t STATS_SHM_SIZE = 4096;
+
+struct BpeRuntimeStats {
+    std::uint64_t magic = 0;
+    std::uint32_t version = 1;
+    std::uint32_t reserved = 0;
+
+    std::uint64_t start_ts_us = 0;
+    std::uint64_t last_ts_us = 0;
+    std::uint64_t last_latency_us = 0;
+    std::uint64_t last_req_id = 0;
+    std::uint32_t last_slot = 0;
+    std::uint32_t last_resp_bytes = 0;
+
+    std::uint64_t req_total = 0;
+    std::uint64_t resp_total = 0;
+    std::uint64_t bytes_in = 0;
+    std::uint64_t bytes_out = 0;
+
+    std::array<std::uint64_t, NUM_SLOTS> per_slot_req{};
+    std::array<std::uint64_t, NUM_SLOTS> per_slot_resp{};
+    std::array<std::uint64_t, NUM_SLOTS> per_slot_bytes_in{};
+    std::array<std::uint64_t, NUM_SLOTS> per_slot_bytes_out{};
+};
 
 struct __attribute__((packed)) bpe_msg_req {
     long msg_type;      // == 1

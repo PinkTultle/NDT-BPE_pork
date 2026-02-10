@@ -22,13 +22,17 @@ TOKENIZER_RPATH := -Wl,-rpath,$(abspath $(TOKENIZERS_LIB_DIR))
 
 CPPFLAGS += -I$(LIBURING_INC)
 
-SRCS := $(wildcard $(SRC_DIR)/*.cpp)
+MAIN_SRC := $(SRC_DIR)/main.cpp
+SRCS := $(filter-out $(MAIN_SRC),$(wildcard $(SRC_DIR)/*.cpp))
 OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRCS))
+MAIN_OBJ := $(OBJ_DIR)/main.o
 TARGET := $(LIB_OUT_DIR)/libndt_compute.a
+BIN_DIR := $(BUILD_DIR)/bin
+BIN_TARGET := $(BIN_DIR)/ndt_compute_main
 
 .PHONY: all clean deps print-tokenizer-deps
 
-all: deps $(TARGET)
+all: deps $(TARGET) $(BIN_TARGET)
 
 deps:
 	@if [ ! -f "$(LIBURING_LIB)" ]; then \
@@ -40,6 +44,10 @@ deps:
 $(TARGET): $(OBJS)
 	@mkdir -p $(LIB_OUT_DIR)
 	$(AR) rcs $@ $^
+
+$(BIN_TARGET): $(TARGET) $(MAIN_OBJ)
+	@mkdir -p $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) $(MAIN_OBJ) $(TARGET) $(LIBURING_LIB) -lpthread -ldl -o $@
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@mkdir -p $(OBJ_DIR)

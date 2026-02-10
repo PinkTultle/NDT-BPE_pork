@@ -65,7 +65,20 @@
         "details": [
           "Submodules added: compute/third_party/liburing, compute/third_party/tokenizers-cpp.",
           "build_compute.sh initializes submodules and builds dependencies.",
-          "Output archive: compute/build/lib/libndt_compute.a."
+          "Output archive: compute/build/lib/libndt_compute.a.",
+          "Binary target: compute/build/bin/ndt_compute_main."
+        ]
+      },
+      {
+        "component": "compute main CLI",
+        "files": [
+          "compute/src/main.cpp"
+        ],
+        "status": "implemented",
+        "details": [
+          "FIEMAP -> NVMe uring_cmd submission pipeline.",
+          "Async submission with configurable queue depth and inflight limit.",
+          "Defaults to opcode 0xD4 and NLB-1 rule in cdw12."
         ]
       }
     ],

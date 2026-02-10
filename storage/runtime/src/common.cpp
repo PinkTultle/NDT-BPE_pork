@@ -7,9 +7,58 @@
 #include <cstring>
 #include <cstdio>
 #include <stdexcept>
+#include <ctime>
 #include <sys/msg.h>
 #include <sys/shm.h>
 #include <utility>
+
+namespace {
+
+constexpr std::uint64_t kStatsMagic = 0x4250455354415431ULL; // "BPESTAT1"
+
+std::uint64_t now_us() {
+    struct timespec ts {};
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return 0;
+    }
+    return static_cast<std::uint64_t>(ts.tv_sec) * 1000000ULL +
+           static_cast<std::uint64_t>(ts.tv_nsec) / 1000ULL;
+}
+
+inline void stats_add_u64(std::uint64_t* p, std::uint64_t v) {
+    __atomic_fetch_add(p, v, __ATOMIC_RELAXED);
+}
+
+inline void stats_store_u64(std::uint64_t* p, std::uint64_t v) {
+    __atomic_store_n(p, v, __ATOMIC_RELAXED);
+}
+
+inline void stats_store_u32(std::uint32_t* p, std::uint32_t v) {
+    __atomic_store_n(p, v, __ATOMIC_RELAXED);
+}
+
+BpeRuntimeStats* attach_stats() {
+    const int id = shmget(STATS_SHM_KEY, STATS_SHM_SIZE, IPC_CREAT | 0660);
+    if (id < 0) {
+        std::perror("[BPE] stats shmget");
+        return nullptr;
+    }
+    void* ptr = shmat(id, nullptr, 0);
+    if (ptr == reinterpret_cast<void*>(-1)) {
+        std::perror("[BPE] stats shmat");
+        return nullptr;
+    }
+    auto* stats = reinterpret_cast<BpeRuntimeStats*>(ptr);
+    if (__atomic_load_n(&stats->magic, __ATOMIC_RELAXED) != kStatsMagic) {
+        *stats = BpeRuntimeStats{};
+        stats->magic = kStatsMagic;
+        stats->version = 1;
+        stats->start_ts_us = now_us();
+    }
+    return stats;
+}
+
+} // namespace
 
 ShmSlotWorker::ShmSlotWorker(std::uint32_t slot, char* read_ptr, char* write_ptr)
     : slot_(slot), read_ptr_(read_ptr), write_ptr_(write_ptr) {}
@@ -104,10 +153,24 @@ void MessageQueueDispatcher::Send(const bpe_msg_resp& resp) const {
 }
 
 void MessageQueueDispatcher::Run() const {
+    BpeRuntimeStats* stats = attach_stats();
     for (;;) {
         bpe_msg_req req{};
         if (!Receive(req)) {
             continue;
+        }
+
+        const std::uint64_t t0 = now_us();
+        if (stats) {
+            stats_store_u64(&stats->last_ts_us, t0);
+            stats_store_u64(&stats->last_req_id, req.req_id);
+            stats_store_u32(&stats->last_slot, req.slot);
+            stats_add_u64(&stats->req_total, 1);
+            stats_add_u64(&stats->bytes_in, req.total_len);
+            if (req.slot < NUM_SLOTS) {
+                stats_add_u64(&stats->per_slot_req[req.slot], 1);
+                stats_add_u64(&stats->per_slot_bytes_in[req.slot], req.total_len);
+            }
         }
 
         bpe_msg_resp resp{};
@@ -123,6 +186,18 @@ void MessageQueueDispatcher::Run() const {
 
         const std::uint32_t total_len = std::min<std::uint32_t>(req.total_len, SHM_SIZE);
         resp.byte_size = workers_[req.slot].Process(total_len);
+        const std::uint64_t t1 = now_us();
+        if (stats) {
+            stats_store_u64(&stats->last_ts_us, t1);
+            stats_store_u64(&stats->last_latency_us, (t1 >= t0) ? (t1 - t0) : 0);
+            stats_store_u32(&stats->last_resp_bytes, resp.byte_size);
+            stats_add_u64(&stats->resp_total, 1);
+            stats_add_u64(&stats->bytes_out, resp.byte_size);
+            if (req.slot < NUM_SLOTS) {
+                stats_add_u64(&stats->per_slot_resp[req.slot], 1);
+                stats_add_u64(&stats->per_slot_bytes_out[req.slot], resp.byte_size);
+            }
+        }
         Send(resp);
     }
 }

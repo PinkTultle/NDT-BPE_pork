@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: ndt_compute
+Version: 0.1.0
+Summary: NDT-BPE compute bindings (FIEMAP + NVMe io_uring).
+Dynamic: summary

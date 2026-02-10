@@ -8,6 +8,29 @@
         "역할2" : "메시지큐에서 같은 req_id가 나오면 req찾아 컴플리션 처리(현재)",
         "구조" : "struct bpe_ticket { req_id, req, deadline_tsc, in_use",
         "변경" : "bpe_ticket구조체에 Write에 필요한 정보들도 같이 보관해야함 ->  rc = spdk_bdev_writev_blocks_ext(desc, ch, req->iov, req->iovcnt, start_lba, num_blocks,nvmf_bdev_ctrlr_complete_cmd, req, &opts);"
+    },
+    "build_2026-02-10" : {
+        "command" : "cd /home/doogunwo/Desktop/NDT-BPE/storage/spdk && sudo make",
+        "status" : "failed",
+        "errors" : [
+            "SPDK_NVME_IO_FLAGS_PRCHK_MASK undefined in nvmf_bdev_ctrlr_get_rw_ext_params",
+            "nvmf_bdev_ctrlr_get_dif_ctx signature mismatch vs nvmf_internal.h",
+            "implicit declarations: spdk_bdev_desc_get_* and spdk_bdev_desc_is_* APIs"
+        ],
+        "warnings" : [
+            "missing declarations for init_shm, bpe_ipc_init_once, bpe_send_request_nb, bpe_response_poller, nvmf_bdev_ctrlr_BPE_tokenize_cmd",
+            "implicit declaration warnings for spdk_bdev_desc_* APIs"
+        ],
+        "notes" : [
+            "target tree is 25.01-pre; overlay code appears to reference newer APIs",
+            "need to align ctrlr_bdev.c changes with 25.01 headers or switch to matching SPDK version"
+        ],
+        "next_steps" : [
+            "update ctrlr_bdev.c to use spdk_bdev_* (non-desc) APIs where required by 25.01",
+            "fix nvmf_bdev_ctrlr_get_dif_ctx signature to match nvmf_internal.h",
+            "replace SPDK_NVME_IO_FLAGS_PRCHK_MASK usage with 25.01-compatible flags",
+            "add forward declarations for local helper functions to silence -Wmissing-declarations"
+        ]
     }
     
 }
