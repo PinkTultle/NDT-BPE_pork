@@ -1,6 +1,6 @@
 {
   "doc_version": "1.0.0",
-  "last_updated": "2026-02-09",
+  "last_updated": "2026-02-10",
   "module": "NDT-BPE/compute",
   "purpose": "Host-side compute support for NDT-BPE: file extent scheduling (FIEMAP), metadata area allocation (fallocate+mmap), and NVMe passthrough submission via io_uring.",
   "goals": [
@@ -78,14 +78,41 @@
         "details": [
           "FIEMAP -> NVMe uring_cmd submission pipeline.",
           "Async submission with configurable queue depth and inflight limit.",
-          "Defaults to opcode 0xD4 and NLB-1 rule in cdw12."
+          "Defaults to opcode 0xD4 and NLB-1 rule in cdw12.",
+          "Maps output file extents and uses cdw14/cdw15 for write SLBA/NLB-1.",
+          "Allocates per-request host data buffer and submits controller-to-host reads."
+        ]
+      },
+      {
+        "component": "python bindings (pybind11)",
+        "files": [
+          "compute/src/bindings.cpp",
+          "compute/setup.py",
+          "compute/pyproject.toml"
+        ],
+        "status": "implemented",
+        "details": [
+          "Exposes tokenize_to_nvme() that mirrors main CLI pipeline.",
+          "Builds a native extension module named ndt_compute.",
+          "Requires pybind11 and links against liburing.a."
+        ]
+      },
+      {
+        "component": "binary output parser",
+        "files": [
+          "compute/build/bin/test_parser.py"
+        ],
+        "status": "implemented",
+        "details": [
+          "Parses uint32 little-endian token IDs from .bin outputs.",
+          "Usage: python3 test_parser.py <bin_path>."
         ]
       }
     ],
     "not_implemented_or_pending": [
       {
-        "item": "End-to-end executable integration",
-        "note": "compute currently builds a static library only; no runtime main/test target in this directory."
+        "item": "Packaging for pip install",
+        "note": "setup.py builds in-place; wheel/sdist packaging and publish workflow not documented yet."
       },
       {
         "item": "Tokenizer runtime integration in compute",
@@ -113,16 +140,22 @@
       "cd NDT-BPE/compute",
       "make -j$(nproc)"
     ],
+    "python_build": [
+      "cd NDT-BPE/compute",
+      "python3 setup.py build_ext --inplace"
+    ],
     "output": "compute/build/lib/libndt_compute.a"
   },
   "known_risks": [
     "FIEMAP returns filesystem physical offsets; assumptions must match target block mapping model.",
     "No current guard against very large fm_mapped_extents beyond configured max_extents truncation.",
+    "Output file extents are assumed to cover the input segments; sparse or fragmented output can reduce effective capacity.",
     "No unit tests in compute directory yet for FIEMAP edge cases (sparse files, unwritten extents, fragmentation)."
   ],
   "next_recommended_steps": [
     "Add small unit/integration tests for fiemap_schedule (including sparse/fragmented files).",
     "Add a minimal compute demo executable that wires: FIEMAP -> metadata -> nvme passthrough.",
-    "Document ABI/field contracts for NvmePassthruCmd usage (cdw10-15 semantics)."
+    "Document ABI/field contracts for NvmePassthruCmd usage (cdw10-15 semantics).",
+    "Document python packaging workflow and runtime prerequisites (pybind11, liburing)."
   ]
 }
