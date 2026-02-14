@@ -46,3 +46,10 @@ build/
 *~
 .vscode/
 
+# .gitignore 파일 내용
+scripts/venv/
+venv/
+.env
+__pycache__/
+*.pyc
+
