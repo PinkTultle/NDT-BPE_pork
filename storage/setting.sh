@@ -1,12 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ---- Config (TARGET = nude1) ----
-TARGET_IP="192.168.50.114"
-TARGET_PORT="4420"
-NQN="nqn.2025-01.io.spdk:cnode1"
-MNT="/mnt/nvme"
-DEV="/dev/nvme0n1"  # [변경] 디바이스 명시적 고정
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE="${NDT_BPE_ENV:-$ROOT_DIR/.env}"
+if [[ -f "${ENV_FILE}" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "${ENV_FILE}"
+  set +a
+else
+  echo "[FATAL] env file not found: ${ENV_FILE}"
+  exit 1
+fi
+
+: "${TARGET_IP:?Missing TARGET_IP}"
+: "${TARGET_PORT:?Missing TARGET_PORT}"
+: "${NQN:?Missing NQN}"
+: "${MNT:?Missing MNT}"
+: "${DEV:?Missing DEV}"
 
 echo "[INFO] Unmount ${MNT} if mounted..."
 if mountPOINT=$(mount | grep "${MNT}"); then
