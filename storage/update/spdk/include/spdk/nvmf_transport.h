@@ -127,9 +127,8 @@ struct spdk_nvmf_request {
 
 	/* Timeout tracked for connect and abort flows. */
 	uint64_t timeout_tsc;
-	uint32_t			orig_nsid;
 };
-SPDK_STATIC_ASSERT(sizeof(struct spdk_nvmf_request) == 816, "Incorrect size");
+SPDK_STATIC_ASSERT(sizeof(struct spdk_nvmf_request) == 808, "Incorrect size");
 
 enum spdk_nvmf_qpair_state {
 	SPDK_NVMF_QPAIR_UNINITIALIZED = 0,
@@ -195,12 +194,12 @@ struct spdk_nvmf_transport_poll_group {
 	STAILQ_HEAD(, spdk_nvmf_request)				pending_buf_queue;
 	struct spdk_iobuf_channel					*buf_cache;
 	struct spdk_nvmf_poll_group					*group;
-	struct spdk_poller						*poller;
 	TAILQ_ENTRY(spdk_nvmf_transport_poll_group)			link;
 };
 
 struct spdk_nvmf_poll_group {
 	struct spdk_thread				*thread;
+	struct spdk_poller				*poller;
 
 	TAILQ_HEAD(, spdk_nvmf_transport_poll_group)	tgroups;
 
@@ -692,7 +691,7 @@ spdk_nvmf_req_get_xfer(struct spdk_nvmf_request *req) {
 	struct spdk_nvme_sgl_descriptor *sgl = &cmd->dptr.sgl1;
 
 	/* Figure out data transfer direction */
-	if (cmd->opc == SPDK_BPE_TOKENIZE){
+	if (cmd->opc == SPDK_BPE_TOKENIZE) {
 		return SPDK_NVME_DATA_CONTROLLER_TO_HOST;
 	}
 	if (cmd->opc == SPDK_NVME_OPC_FABRIC)

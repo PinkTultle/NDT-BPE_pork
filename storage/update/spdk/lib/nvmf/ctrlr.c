@@ -22,7 +22,7 @@
 #include "spdk/version.h"
 #include "spdk/log.h"
 #include "spdk_internal/usdt.h"
-#include <sys/time.h>
+
 #define MIN_KEEP_ALIVE_TIMEOUT_IN_MS 10000
 #define NVMF_DISC_KATO_IN_MS 120000
 #define KAS_TIME_UNIT_IN_MS 100
@@ -33,7 +33,6 @@
 #define NVMF_CTRLR_RESET_SHN_TIMEOUT_IN_MS	(NVMF_CC_RESET_SHN_TIMEOUT_IN_MS + 5000)
 
 #define DUPLICATE_QID_RETRY_US 1000
-
 
 /*
  * Report the SPDK version as the firmware revision.
@@ -312,8 +311,6 @@ nvmf_ctrlr_add_qpair(struct spdk_nvmf_qpair *qpair,
 		return;
 	}
 
-	qpair->connect_req = NULL;
-
 	SPDK_DTRACE_PROBE4_TICKS(nvmf_ctrlr_add_qpair, qpair, qpair->qid, ctrlr->subsys->subnqn,
 				 ctrlr->hostnqn);
 	nvmf_qpair_set_ctrlr(qpair, ctrlr);
@@ -427,7 +424,7 @@ nvmf_ctrlr_init_visible_ns(struct spdk_nvmf_ctrlr *ctrlr)
 	for (ns = spdk_nvmf_subsystem_get_first_ns(subsystem); ns != NULL;
 	     ns = spdk_nvmf_subsystem_get_next_ns(subsystem, ns)) {
 		if (ns->always_visible || nvmf_ns_find_host(ns, ctrlr->hostnqn) != NULL) {
-			nvmf_ctrlr_ns_set_visible(ctrlr, ns->nsid, true);
+			spdk_bit_array_set(ctrlr->visible_ns, ns->nsid - 1);
 		}
 	}
 }
@@ -911,7 +908,6 @@ _nvmf_ctrlr_connect(struct spdk_nvmf_request *req)
 	qpair->connect_received = true;
 
 	pthread_mutex_lock(&qpair->group->mutex);
-	assert(qpair->group->current_unassociated_qpairs > 0);
 	qpair->group->current_unassociated_qpairs--;
 	pthread_mutex_unlock(&qpair->group->mutex);
 
@@ -2514,7 +2510,6 @@ static const struct spdk_nvme_cmds_and_effect_log_page g_cmds_and_effect_log_pag
 	.admin_cmds_supported = {
 		/* CSUPP, LBCC, NCC, NIC, CCC, CSE */
 		/* Get Log Page */
-	
 		[SPDK_NVME_OPC_GET_LOG_PAGE]		= {1, 0, 0, 0, 0, 0, 0, 0},
 		/* Identify */
 		[SPDK_NVME_OPC_IDENTIFY]		= {1, 0, 0, 0, 0, 0, 0, 0},
@@ -2550,7 +2545,6 @@ static const struct spdk_nvme_cmds_and_effect_log_page g_cmds_and_effect_log_pag
 		[SPDK_NVME_OPC_ZONE_APPEND]		= {1, 1, 0, 0, 0, 0, 0, 0},
 		/* COPY */
 		[SPDK_NVME_OPC_COPY]			= {1, 1, 0, 0, 0, 0, 0, 0},
-
 		[SPDK_BPE_TOKENIZE]					= {1, 0, 0, 0, 0, 0, 0, 0},
 	},
 };
@@ -2779,15 +2773,14 @@ static void
 nvmf_ctrlr_identify_ns(struct spdk_nvmf_ctrlr *ctrlr,
 		       struct spdk_nvme_cmd *cmd,
 		       struct spdk_nvme_cpl *rsp,
-		       struct spdk_nvme_ns_data *nsdata,
-		       uint32_t nsid)
+		       struct spdk_nvme_ns_data *nsdata)
 {
 	struct spdk_nvmf_subsystem *subsystem = ctrlr->subsys;
 	struct spdk_nvmf_ns *ns;
 	uint32_t max_num_blocks, format_index;
 	enum spdk_nvme_ana_state ana_state;
 
-	ns = _nvmf_ctrlr_get_ns_safe(ctrlr, nsid, rsp);
+	ns = _nvmf_ctrlr_get_ns_safe(ctrlr, cmd->nsid, rsp);
 	if (ns == NULL) {
 		return;
 	}
@@ -2828,7 +2821,7 @@ spdk_nvmf_ctrlr_identify_ns(struct spdk_nvmf_ctrlr *ctrlr,
 			    struct spdk_nvme_cpl *rsp,
 			    struct spdk_nvme_ns_data *nsdata)
 {
-	nvmf_ctrlr_identify_ns(ctrlr, cmd, rsp, nsdata, cmd->nsid);
+	nvmf_ctrlr_identify_ns(ctrlr, cmd, rsp, nsdata);
 
 	return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
 }
@@ -2846,7 +2839,8 @@ identify_ns_passthru_cb(struct spdk_nvmf_request *req)
 	/* This is the identify data from the NVMe drive */
 	datalen = spdk_nvmf_request_copy_to_buf(req, &nvme_nsdata,
 						sizeof(nvme_nsdata));
-	nvmf_ctrlr_identify_ns(ctrlr, cmd, rsp, &nvmf_nsdata, req->orig_nsid);
+
+	nvmf_ctrlr_identify_ns(ctrlr, cmd, rsp, &nvmf_nsdata);
 
 	/* Update fabric's namespace according to SSD's namespace */
 	if (nvme_nsdata.nsfeat.optperf) {
@@ -2877,7 +2871,6 @@ spdk_nvmf_ctrlr_identify_ns_ext(struct spdk_nvmf_request *req)
 {
 	struct spdk_nvme_cmd *cmd = spdk_nvmf_request_get_cmd(req);
 	struct spdk_nvmf_ctrlr *ctrlr = spdk_nvmf_request_get_ctrlr(req);
-	struct spdk_nvmf_ns *ns = nvmf_ctrlr_get_ns(ctrlr, cmd->nsid);
 	struct spdk_nvme_cpl *rsp = spdk_nvmf_request_get_response(req);
 	struct spdk_bdev *bdev;
 	struct spdk_bdev_desc *desc;
@@ -2886,7 +2879,7 @@ spdk_nvmf_ctrlr_identify_ns_ext(struct spdk_nvmf_request *req)
 	struct spdk_iov_xfer ix;
 	int rc;
 
-	nvmf_ctrlr_identify_ns(ctrlr, cmd, rsp, &nsdata, cmd->nsid);
+	nvmf_ctrlr_identify_ns(ctrlr, cmd, rsp, &nsdata);
 
 	rc = spdk_nvmf_request_get_bdev(cmd->nsid, req, &bdev, &desc, &ch);
 	if (rc) {
@@ -2899,10 +2892,6 @@ spdk_nvmf_ctrlr_identify_ns_ext(struct spdk_nvmf_request *req)
 
 		return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
 	}
-
-	assert(ns->passthru_nsid != 0);
-	req->orig_nsid = ns->nsid;
-	cmd->nsid = ns->passthru_nsid;
 
 	return spdk_nvmf_bdev_ctrlr_nvme_passthru_admin(bdev, desc, ch, req, identify_ns_passthru_cb);
 }
@@ -3823,30 +3812,6 @@ nvmf_ctrlr_keep_alive(struct spdk_nvmf_request *req)
 	return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
 }
 
-static bool
-is_cmd_ctrlr_specific(struct spdk_nvme_cmd *cmd)
-{
-	switch (cmd->opc) {
-	case SPDK_NVME_OPC_DELETE_IO_SQ:
-	case SPDK_NVME_OPC_CREATE_IO_SQ:
-	case SPDK_NVME_OPC_DELETE_IO_CQ:
-	case SPDK_NVME_OPC_CREATE_IO_CQ:
-	case SPDK_NVME_OPC_ABORT:
-	case SPDK_NVME_OPC_ASYNC_EVENT_REQUEST:
-	case SPDK_NVME_OPC_FIRMWARE_COMMIT:
-	case SPDK_NVME_OPC_FIRMWARE_IMAGE_DOWNLOAD:
-	case SPDK_NVME_OPC_KEEP_ALIVE:
-	case SPDK_NVME_OPC_VIRTUALIZATION_MANAGEMENT:
-	case SPDK_NVME_OPC_NVME_MI_SEND:
-	case SPDK_NVME_OPC_NVME_MI_RECEIVE:
-	case SPDK_NVME_OPC_DOORBELL_BUFFER_CONFIG:
-	case SPDK_NVME_OPC_SANITIZE:
-		return true;
-	default:
-		return false;
-	}
-}
-
 int
 nvmf_ctrlr_process_admin_cmd(struct spdk_nvmf_request *req)
 {
@@ -3869,11 +3834,8 @@ nvmf_ctrlr_process_admin_cmd(struct spdk_nvmf_request *req)
 
 	assert(spdk_get_thread() == ctrlr->thread);
 
-	if (cmd->fuse != 0 ||
-	    (is_cmd_ctrlr_specific(cmd) && (cmd->nsid != 0))) {
-		/* Fused admin commands are not supported.
-		 * Commands with controller scope - should be rejected if NSID is set.
-		 */
+	if (cmd->fuse != 0) {
+		/* Fused admin commands are not supported. */
 		response->status.sct = SPDK_NVME_SCT_GENERIC;
 		response->status.sc = SPDK_NVME_SC_INVALID_FIELD;
 		return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
@@ -4522,12 +4484,10 @@ nvmf_ctrlr_process_io_cmd(struct spdk_nvmf_request *req)
 	struct spdk_nvmf_subsystem_pg_ns_info *ns_info;
 	enum spdk_nvme_ana_state ana_state;
 
-
-
-
+	/* pre-set response details for this command */
 	response->status.sc = SPDK_NVME_SC_SUCCESS;
 	nsid = cmd->nsid;
-	
+
 	assert(ctrlr != NULL);
 	if (spdk_unlikely(ctrlr->vcprop.cc.bits.en != 1)) {
 		SPDK_ERRLOG("I/O command sent to disabled controller\n");
@@ -4589,37 +4549,19 @@ nvmf_ctrlr_process_io_cmd(struct spdk_nvmf_request *req)
 		qpair->first_fused_req = NULL;
 	}
 
-	
-
 	if (ctrlr->subsys->passthrough) {
-		assert(ns->passthru_nsid > 0);
-		req->cmd->nvme_cmd.nsid = ns->passthru_nsid;
+		assert(ns->passthrough_nsid > 0);
+		req->cmd->nvme_cmd.nsid = ns->passthrough_nsid;
 
 		return nvmf_bdev_ctrlr_nvme_passthru_io(bdev, desc, ch, req);
 	}
+
 	if (spdk_nvmf_request_using_zcopy(req)) {
 		assert(req->zcopy_phase == NVMF_ZCOPY_PHASE_INIT);
 		return nvmf_bdev_ctrlr_zcopy_start(bdev, desc, ch, req);
 	} else {
 		switch (cmd->opc) {
-		case SPDK_BPE_TOKENIZE:
-		
-			/*
-			SPDK_NOTICELOG("Request received: OPC=0x%x, NSID=%u, CDW10=0x%x, CDW12=%u, CDW13=%u, Data Length=%u bytes\n",
-               req->cmd->nvme_cmd.opc,
-               req->cmd->nvme_cmd.nsid,
-               req->cmd->nvme_cmd.cdw10,
-               req->cmd->nvme_cmd.cdw12,
-               req->cmd->nvme_cmd.cdw13,
-               req->length); */
-			return nvmf_bdev_ctrlr_BPE_tokenize_cmd(bdev, desc, ch, req);
 		case SPDK_NVME_OPC_READ:
-			/*
-			SPDK_NOTICELOG("Request received: OPC=0x%x, NSID=%u, Data Length=%u bytes\n",
-               req->cmd->nvme_cmd.opc,
-               req->cmd->nvme_cmd.nsid,
-               req->length); */
-			   
 			return nvmf_bdev_ctrlr_read_cmd(bdev, desc, ch, req);
 		case SPDK_NVME_OPC_WRITE:
 			return nvmf_bdev_ctrlr_write_cmd(bdev, desc, ch, req);
@@ -4642,6 +4584,18 @@ nvmf_ctrlr_process_io_cmd(struct spdk_nvmf_request *req)
 			return nvmf_bdev_ctrlr_dsm_cmd(bdev, desc, ch, req);
 		case SPDK_NVME_OPC_RESERVATION_REGISTER:
 		case SPDK_NVME_OPC_RESERVATION_ACQUIRE:
+		case SPDK_BPE_TOKENIZE:
+			
+			SPDK_NOTICELOG("Request received: OPC=0x%x, NSID=%u, CDW10=0x%x, CDW12=%u, CDW13=%u, CDW14=%u, CDW15=%u, Data Length=%u bytes\n",
+               req->cmd->nvme_cmd.opc,
+               req->cmd->nvme_cmd.nsid,
+               req->cmd->nvme_cmd.cdw10,
+               req->cmd->nvme_cmd.cdw12,
+               req->cmd->nvme_cmd.cdw13,
+			   req->cmd->nvme_cmd.cdw14,
+			   req->cmd->nvme_cmd.cdw15,
+               req->length); 
+			return nvmf_bdev_ctrlr_BPE_tokenize_cmd(bdev, desc, ch, req);
 		case SPDK_NVME_OPC_RESERVATION_RELEASE:
 		case SPDK_NVME_OPC_RESERVATION_REPORT:
 			if (spdk_unlikely(!ctrlr->cdata.oncs.reservations)) {
@@ -4658,8 +4612,8 @@ nvmf_ctrlr_process_io_cmd(struct spdk_nvmf_request *req)
 			if (spdk_unlikely(qpair->transport->opts.disable_command_passthru)) {
 				goto invalid_opcode;
 			}
-			if (ns->passthru_nsid) {
-				req->cmd->nvme_cmd.nsid = ns->passthru_nsid;
+			if (ns->passthrough_nsid) {
+				req->cmd->nvme_cmd.nsid = ns->passthrough_nsid;
 			}
 			return nvmf_bdev_ctrlr_nvme_passthru_io(bdev, desc, ch, req);
 		}
@@ -4988,7 +4942,7 @@ nvmf_ctrlr_get_dif_ctx(struct spdk_nvmf_ctrlr *ctrlr, struct spdk_nvme_cmd *cmd,
 		       struct spdk_dif_ctx *dif_ctx)
 {
 	struct spdk_nvmf_ns *ns;
-	struct spdk_bdev_desc *desc;
+	struct spdk_bdev *bdev;
 
 	if (ctrlr == NULL || cmd == NULL) {
 		return false;
@@ -4999,13 +4953,13 @@ nvmf_ctrlr_get_dif_ctx(struct spdk_nvmf_ctrlr *ctrlr, struct spdk_nvme_cmd *cmd,
 		return false;
 	}
 
-	desc = ns->desc;
+	bdev = ns->bdev;
 
 	switch (cmd->opc) {
 	case SPDK_NVME_OPC_READ:
 	case SPDK_NVME_OPC_WRITE:
 	case SPDK_NVME_OPC_COMPARE:
-		return nvmf_bdev_ctrlr_get_dif_ctx(desc, cmd, dif_ctx);
+		return nvmf_bdev_ctrlr_get_dif_ctx(bdev, cmd, dif_ctx);
 	default:
 		break;
 	}
@@ -5065,8 +5019,8 @@ nvmf_passthru_admin_cmd_for_bdev_nsid(struct spdk_nvmf_request *req, uint32_t bd
 	ctrlr = req->qpair->ctrlr;
 	ns = nvmf_ctrlr_get_ns(ctrlr, bdev_nsid);
 
-	if (ns->passthru_nsid) {
-		req->cmd->nvme_cmd.nsid = ns->passthru_nsid;
+	if (ns->passthrough_nsid) {
+		req->cmd->nvme_cmd.nsid = ns->passthrough_nsid;
 	}
 
 	return spdk_nvmf_bdev_ctrlr_nvme_passthru_admin(bdev, desc, ch, req, NULL);

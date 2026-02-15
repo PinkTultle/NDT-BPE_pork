@@ -34,6 +34,12 @@
 #define SHM_SIZE                131072 // 공유 메모리 크기 
 #define NUM_SLOTS    16 
 
+/* 25.01-pre compatibility: PRCHK mask not defined */
+#ifndef SPDK_NVME_IO_FLAGS_PRCHK_MASK
+#define SPDK_NVME_IO_FLAGS_PRCHK_MASK (SPDK_NVME_IO_FLAGS_PRCHK_REFTAG | \
+                                       SPDK_NVME_IO_FLAGS_PRCHK_APPTAG | \
+                                       SPDK_NVME_IO_FLAGS_PRCHK_GUARD)
+#endif
 //-----------------------------
 typedef struct __attribute__((packed)) bpe_msg_req {
     long      msg_type;
@@ -127,22 +133,14 @@ static void
 nvmf_bdev_ctrl_queue_io(struct spdk_nvmf_request *req, struct spdk_bdev *bdev,
                         struct spdk_io_channel *ch, spdk_bdev_io_wait_cb cb_fn, void *cb_arg);
 
-char* init_shm(int shm_key)
+static inline struct spdk_bdev *
+bpe_desc_bdev(struct spdk_bdev_desc *desc)
 {
-    int id = shmget(shm_key, SHM_SIZE, IPC_CREAT | 0660);
-    if (id < 0) {
-        SPDK_ERRLOG("shmget(%x) failed: %s\n", shm_key, spdk_strerror(errno));
-        return NULL;
-    }
-    void *p = shmat(id, NULL, 0);
-    if (p == (void *)-1) {
-        SPDK_ERRLOG("shmat(%x) failed: %s\n", shm_key, spdk_strerror(errno));
-        return NULL;
-    }
-    return (char *)p;
+    return spdk_bdev_desc_get_bdev(desc);
 }
 
-void bpe_ipc_init_once(void)
+
+static void bpe_ipc_init_once(void)
 {
     static bool inited = false;
     if (inited) return;
@@ -238,7 +236,7 @@ static void bpe_ticket_timeout_sweep(void)
 }
 
 /* 비블로킹 송신 */
-int bpe_send_request_nb(uint64_t req_id, uint32_t total_len, uint32_t slot)
+static int bpe_send_request_nb(uint64_t req_id, uint32_t total_len, uint32_t slot)
 {
     bpe_msg_req m = {
         .msg_type  = 1,
@@ -375,13 +373,13 @@ nvmf_bdev_ctrlr_identify_ns(struct spdk_nvmf_ns *ns, struct spdk_nvme_ns_data *n
         nsdata->flbas.msb_format = 0;
         nsdata->nacwu = spdk_bdev_get_acwu(bdev) - 1; /* nacwu is 0-based */
         if (!dif_insert_or_strip) {
-                nsdata->lbaf[0].ms = spdk_bdev_desc_get_md_size(desc);
-                nsdata->lbaf[0].lbads = spdk_u32log2(spdk_bdev_desc_get_block_size(desc));
+                nsdata->lbaf[0].ms = spdk_bdev_get_md_size(bpe_desc_bdev(desc));
+                nsdata->lbaf[0].lbads = spdk_u32log2(spdk_bdev_get_block_size(bpe_desc_bdev(desc)));
                 if (nsdata->lbaf[0].ms != 0) {
                         nsdata->flbas.extended = 1;
                         nsdata->mc.extended = 1;
                         nsdata->mc.pointer = 0;
-                        nsdata->dps.md_start = spdk_bdev_desc_is_dif_head_of_md(desc);
+                        nsdata->dps.md_start = spdk_bdev_is_dif_head_of_md(bpe_desc_bdev(desc));
 
                         switch (spdk_bdev_get_dif_type(bdev)) {
                         case SPDK_DIF_TYPE1:
@@ -461,11 +459,11 @@ nvmf_bdev_ctrlr_identify_iocs_nvm(struct spdk_nvmf_ns *ns,
         uint8_t _16bpists;
         uint32_t sts, pif;
 
-        if (spdk_bdev_desc_get_dif_type(desc) == SPDK_DIF_DISABLE) {
+        if (spdk_bdev_get_dif_type(bpe_desc_bdev(desc)) == SPDK_DIF_DISABLE) {
                 return;
         }
 
-        pif = spdk_bdev_desc_get_dif_pi_format(desc);
+        pif = spdk_bdev_get_dif_pi_format(bpe_desc_bdev(desc));
 
         /*
          * 16BPISTS shall be 1 for 32/64b Guard PI.
@@ -615,7 +613,7 @@ nvmf_bdev_ctrlr_read_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
         };
 
         uint64_t bdev_num_blocks = spdk_bdev_get_num_blocks(bdev);
-        uint32_t block_size = spdk_bdev_desc_get_block_size(desc);
+        uint32_t block_size = spdk_bdev_get_block_size(bpe_desc_bdev(desc));
         struct spdk_nvme_cmd *cmd = &req->cmd->nvme_cmd;
         struct spdk_nvme_cpl *rsp = &req->rsp->nvme_cpl;
         uint64_t start_lba;
@@ -669,7 +667,7 @@ nvmf_bdev_ctrlr_write_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
                 .accel_sequence = req->accel_sequence,
         };
         uint64_t bdev_num_blocks = spdk_bdev_get_num_blocks(bdev);
-        uint32_t block_size = spdk_bdev_desc_get_block_size(desc);
+        uint32_t block_size = spdk_bdev_get_block_size(bpe_desc_bdev(desc));
         struct spdk_nvme_cmd *cmd = &req->cmd->nvme_cmd;
         struct spdk_nvme_cpl *rsp = &req->rsp->nvme_cpl;
         uint64_t start_lba;
@@ -716,7 +714,7 @@ nvmf_bdev_ctrlr_compare_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
                             struct spdk_io_channel *ch, struct spdk_nvmf_request *req)
 {
         uint64_t bdev_num_blocks = spdk_bdev_get_num_blocks(bdev);
-        uint32_t block_size = spdk_bdev_desc_get_block_size(desc);
+        uint32_t block_size = spdk_bdev_get_block_size(bpe_desc_bdev(desc));
         struct spdk_nvme_cmd *cmd = &req->cmd->nvme_cmd;
         struct spdk_nvme_cpl *rsp = &req->rsp->nvme_cpl;
         uint64_t start_lba;
@@ -760,7 +758,7 @@ nvmf_bdev_ctrlr_compare_and_write_cmd(struct spdk_bdev *bdev, struct spdk_bdev_d
                                       struct spdk_io_channel *ch, struct spdk_nvmf_request *cmp_req, struct spdk_nvmf_request *write_req)
 {
         uint64_t bdev_num_blocks = spdk_bdev_get_num_blocks(bdev);
-        uint32_t block_size = spdk_bdev_desc_get_block_size(desc);
+        uint32_t block_size = spdk_bdev_get_block_size(bpe_desc_bdev(desc));
         struct spdk_nvme_cmd *cmp_cmd = &cmp_req->cmd->nvme_cmd;
         struct spdk_nvme_cmd *write_cmd = &write_req->cmd->nvme_cmd;
         struct spdk_nvme_cpl *rsp = &write_req->rsp->nvme_cpl;
@@ -824,7 +822,7 @@ nvmf_bdev_ctrlr_write_zeroes_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *
 
         nvmf_bdev_ctrlr_get_rw_params(cmd, &start_lba, &num_blocks);
         if (spdk_unlikely(max_write_zeroes_size > 0 &&
-                          num_blocks > (max_write_zeroes_size << 10) / spdk_bdev_desc_get_block_size(desc))) {
+                          num_blocks > (max_write_zeroes_size << 10) / spdk_bdev_get_block_size(bpe_desc_bdev(desc)))) {
                 SPDK_ERRLOG("invalid write zeroes size, should not exceed %" PRIu64 "Kib\n", max_write_zeroes_size);
                 rsp->status.sct = SPDK_NVME_SCT_GENERIC;
                 rsp->status.sc = SPDK_NVME_SC_INVALID_FIELD;
@@ -950,7 +948,7 @@ nvmf_bdev_ctrlr_unmap(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
         struct spdk_nvme_cmd *cmd = &req->cmd->nvme_cmd;
         struct spdk_nvme_cpl *response = &req->rsp->nvme_cpl;
         uint64_t max_discard_size = req->qpair->ctrlr->subsys->max_discard_size_kib;
-        uint32_t block_size = spdk_bdev_desc_get_block_size(desc);
+        uint32_t block_size = spdk_bdev_get_block_size(bpe_desc_bdev(desc));
         struct spdk_iov_xfer ix;
         uint64_t lba;
         uint32_t lba_count;
@@ -1201,36 +1199,36 @@ spdk_nvmf_bdev_ctrlr_abort_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *de
 }
 
 bool
-nvmf_bdev_ctrlr_get_dif_ctx(struct spdk_bdev_desc *desc, struct spdk_nvme_cmd *cmd,
+nvmf_bdev_ctrlr_get_dif_ctx(struct spdk_bdev *bdev, struct spdk_nvme_cmd *cmd,
                             struct spdk_dif_ctx *dif_ctx)
 {
         uint32_t init_ref_tag, dif_check_flags = 0;
         int rc;
         struct spdk_dif_ctx_init_ext_opts dif_opts;
 
-        if (spdk_bdev_desc_get_md_size(desc) == 0) {
+        if (spdk_bdev_get_md_size(bdev) == 0) {
                 return false;
         }
 
         /* Initial Reference Tag is the lower 32 bits of the start LBA. */
         init_ref_tag = (uint32_t)from_le64(&cmd->cdw10);
 
-        if (spdk_bdev_desc_is_dif_check_enabled(desc, SPDK_DIF_CHECK_TYPE_REFTAG)) {
+        if (spdk_bdev_is_dif_check_enabled(bdev, SPDK_DIF_CHECK_TYPE_REFTAG)) {
                 dif_check_flags |= SPDK_DIF_FLAGS_REFTAG_CHECK;
         }
 
-        if (spdk_bdev_desc_is_dif_check_enabled(desc, SPDK_DIF_CHECK_TYPE_GUARD)) {
+        if (spdk_bdev_is_dif_check_enabled(bdev, SPDK_DIF_CHECK_TYPE_GUARD)) {
                 dif_check_flags |= SPDK_DIF_FLAGS_GUARD_CHECK;
         }
 
         dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
         dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
         rc = spdk_dif_ctx_init(dif_ctx,
-                               spdk_bdev_desc_get_block_size(desc),
-                               spdk_bdev_desc_get_md_size(desc),
-                               spdk_bdev_desc_is_md_interleaved(desc),
-                               spdk_bdev_desc_is_dif_head_of_md(desc),
-                               spdk_bdev_desc_get_dif_type(desc),
+                               spdk_bdev_get_block_size(bdev),
+                               spdk_bdev_get_md_size(bdev),
+                               spdk_bdev_is_md_interleaved(bdev),
+                               spdk_bdev_is_dif_head_of_md(bdev),
+                               spdk_bdev_get_dif_type(bdev),
                                dif_check_flags,
                                init_ref_tag, 0, 0, 0, 0, &dif_opts);
 
@@ -1283,7 +1281,7 @@ nvmf_bdev_ctrlr_zcopy_start(struct spdk_bdev *bdev,
 {
         struct spdk_nvme_cpl *rsp = &req->rsp->nvme_cpl;
         uint64_t bdev_num_blocks = spdk_bdev_get_num_blocks(bdev);
-        uint32_t block_size = spdk_bdev_desc_get_block_size(desc);
+        uint32_t block_size = spdk_bdev_get_block_size(bpe_desc_bdev(desc));
         uint64_t start_lba;
         uint64_t num_blocks;
         int rc;
@@ -1356,7 +1354,7 @@ nvmf_bdev_ctrlr_zcopy_end(struct spdk_nvmf_request *req, bool commit)
         assert(rc == 0);
 }
 
-int bpe_response_poller(void *arg)
+static int bpe_response_poller(void *arg)
 {
     bool did_work = false;
     for (int k = 0; k < 8; k++) { //k는 배치 사이즈를 의미함 ~32 1번에 처리하는 배치사이즈
@@ -1394,11 +1392,33 @@ int bpe_response_poller(void *arg)
             copied += to_copy;
         }
 
-        /* 가변 응답 설계라면 공유 메모리를 통해서 받은 값으로 req->length 수정해야해 */
-        req->length = copied;
+        /* 가변 응답: 남는 영역은 0으로 패딩해서 block-aligned write 가능하게 */
+        uint32_t block_size = spdk_bdev_get_block_size(bpe_desc_bdev(ticket.desc));
+        uint64_t target_bytes = ticket.write_num_blocks * (uint64_t)block_size;
+        if (target_bytes > 0 && copied < target_bytes) {
+            uint64_t remaining = target_bytes - copied;
+            for (int i = 0; i < req->iovcnt && remaining > 0; i++) {
+                uint8_t *base = (uint8_t *)req->iov[i].iov_base;
+                uint32_t iov_len = (uint32_t)req->iov[i].iov_len;
+                uint32_t offset = 0;
+                if (copied > 0) {
+                    if (copied >= iov_len) {
+                        copied -= iov_len;
+                        continue;
+                    }
+                    offset = copied;
+                    copied = 0;
+                }
+                uint32_t to_zero = spdk_min((uint32_t)remaining, iov_len - offset);
+                memset(base + offset, 0, to_zero);
+                remaining -= to_zero;
+            }
+        }
+
+        /* write 길이는 cdw15 기준으로 고정 */
+        req->length = (uint32_t)target_bytes;
 
         struct spdk_nvme_cpl *rsp = &req->rsp->nvme_cpl;
-        uint32_t block_size = spdk_bdev_desc_get_block_size(ticket.desc);
         uint64_t bdev_num_blocks = spdk_bdev_get_num_blocks(ticket.bdev);
         struct spdk_bdev_ext_io_opts opts = {
                 .size = SPDK_SIZEOF(&opts, nvme_cdw13),
@@ -1515,8 +1535,7 @@ nvmf_bdev_ctrlr_bpe_complete(struct spdk_bdev_io *bdev_io, bool success, void *c
     free(ctx);
 }
 
-int 
-nvmf_bdev_ctrlr_BPE_tokenize_cmd(struct spdk_bdev *bdev, 
+int nvmf_bdev_ctrlr_BPE_tokenize_cmd(struct spdk_bdev *bdev,
                                     struct spdk_bdev_desc *desc,
                                     struct spdk_io_channel *ch, 
                                     struct spdk_nvmf_request *req)
@@ -1530,7 +1549,7 @@ nvmf_bdev_ctrlr_BPE_tokenize_cmd(struct spdk_bdev *bdev,
         //printf("[Host -> SPDK] IOCTL 명령 수신 및 명령 파싱 체크포인트 : %.3f µs\n", end);
 
         uint64_t bdev_num_blocks = spdk_bdev_get_num_blocks(bdev);
-        uint32_t block_size = spdk_bdev_desc_get_block_size(desc);
+        uint32_t block_size = spdk_bdev_get_block_size(bpe_desc_bdev(desc));
         struct spdk_nvme_cmd *cmd = &req->cmd->nvme_cmd;
         struct spdk_nvme_cpl *rsp = &req->rsp->nvme_cpl;
         uint64_t start_lba;

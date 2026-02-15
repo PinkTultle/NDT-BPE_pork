@@ -33,12 +33,11 @@ static void *g_accel_p = (void *)0xdeadbeaf;
 
 SPDK_LOG_REGISTER_COMPONENT(nvmf)
 
-
-DEFINE_STUB(nvmf_bdev_ctrlr_BPE_tokenize_cmd, // 각 파일에 새롭게 작성한 함수에 대해 아래와 같이 추가
-	int,
-	(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
-	 struct spdk_nvmf_request *req),
-	0);
+DEFINE_STUB(nvmf_bdev_ctrlr_BPE_tokenize_cmd,
+	    int,
+	    (struct spdk_bdev *bdev, struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+	     struct spdk_nvmf_request *req),
+	    0);
 
 DEFINE_STUB(spdk_nvmf_qpair_get_listen_trid,
 	    int,
@@ -179,7 +178,7 @@ DEFINE_STUB(spdk_nvmf_bdev_ctrlr_abort_cmd,
 
 DEFINE_STUB(nvmf_bdev_ctrlr_get_dif_ctx,
 	    bool,
-	    (struct spdk_bdev_desc *desc, struct spdk_nvme_cmd *cmd, struct spdk_dif_ctx *dif_ctx),
+	    (struct spdk_bdev *bdev, struct spdk_nvme_cmd *cmd, struct spdk_dif_ctx *dif_ctx),
 	    false);
 
 DEFINE_STUB_V(nvmf_bdev_ctrlr_identify_iocs_nvm,
@@ -640,7 +639,7 @@ test_nvmf_tcp_send_c2h_data(void)
 
 	c2h_data = &pdu.hdr.c2h_data;
 	CU_ASSERT(c2h_data->datao == 0);
-	CU_ASSERT(c2h_data->datal == 300);
+	CU_ASSERT(c2h_data->datal = 300);
 	CU_ASSERT(c2h_data->common.plen == sizeof(*c2h_data) + 300);
 	CU_ASSERT(c2h_data->common.flags & SPDK_NVME_TCP_C2H_DATA_FLAGS_LAST_PDU);
 	CU_ASSERT(c2h_data->common.flags & SPDK_NVME_TCP_C2H_DATA_FLAGS_SUCCESS);

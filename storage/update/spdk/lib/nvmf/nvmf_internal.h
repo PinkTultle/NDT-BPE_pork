@@ -46,29 +46,6 @@ enum spdk_nvmf_subsystem_state {
 	SPDK_NVMF_SUBSYSTEM_NUM_STATES,
 };
 
-
-int
-nvmf_bdev_ctrlr_BPE_tokenize_cmd(	struct spdk_bdev *bdev, 
-									struct spdk_bdev_desc *desc,
-									struct spdk_io_channel *ch, 
-									struct spdk_nvmf_request *req);
-									
-void write_iov_to_shm(char* shm_write_ptr, struct iovec *iovs, int iovcnt);
-void write_to_shm(char* shm_write_ptr, struct iovec *iovs, int iovcnt);
-void send_bpe_request(int msg_id);
-bool receive_bpe_response(int msg_id);
-
-void send_bpe_request_omp(int msg_id, uint32_t total_len);
-bool receive_bpe_response_omp(int msg_id, uint32_t *byte_size_out);
-void bpe_ipc_init_once(void);
-void read_from_shm(char* shm_read_ptr, struct spdk_nvmf_request *req);
-char* init_shm(int shm_key);
-void ticket_timeout_sweep(void);
-void ticket_init_once(void);
-int bpe_send_request_nb(uint64_t req_id, uint32_t total_len, uint32_t slot);
-struct spdk_nvmf_request *ticket_take(uint64_t req_id);
-int bpe_response_poller(void *arg);
-bool ticket_insert(uint64_t req_id, struct spdk_nvmf_request *req, uint64_t timeout_us);
 RB_HEAD(subsystem_tree, spdk_nvmf_subsystem);
 
 struct spdk_nvmf_tgt {
@@ -210,7 +187,7 @@ struct spdk_nvmf_ns {
 	/* Namespace is always visible to all controllers */
 	bool always_visible;
 	/* Namespace id of the underlying device, used for passthrough commands */
-	uint32_t passthru_nsid;
+	uint32_t passthrough_nsid;
 };
 
 /*
@@ -377,8 +354,6 @@ struct spdk_nvmf_subsystem {
 	bool						passthrough;
 };
 
-
-
 static int
 subsystem_cmp(struct spdk_nvmf_subsystem *subsystem1, struct spdk_nvmf_subsystem *subsystem2)
 {
@@ -401,6 +376,7 @@ void nvmf_poll_group_pause_subsystem(struct spdk_nvmf_poll_group *group,
 void nvmf_poll_group_resume_subsystem(struct spdk_nvmf_poll_group *group,
 				      struct spdk_nvmf_subsystem *subsystem, spdk_nvmf_poll_group_mod_done cb_fn, void *cb_arg);
 
+void nvmf_update_discovery_log(struct spdk_nvmf_tgt *tgt, const char *hostnqn);
 void nvmf_get_discovery_log_page(struct spdk_nvmf_tgt *tgt, const char *hostnqn, struct iovec *iov,
 				 uint32_t iovcnt, uint64_t offset, uint32_t length,
 				 struct spdk_nvme_transport_id *cmd_source_trid);
@@ -434,9 +410,11 @@ int nvmf_bdev_ctrlr_dsm_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
 			    struct spdk_io_channel *ch, struct spdk_nvmf_request *req);
 int nvmf_bdev_ctrlr_copy_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
 			     struct spdk_io_channel *ch, struct spdk_nvmf_request *req);
+int nvmf_bdev_ctrlr_BPE_tokenize_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
+				     struct spdk_io_channel *ch, struct spdk_nvmf_request *req);
 int nvmf_bdev_ctrlr_nvme_passthru_io(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
 				     struct spdk_io_channel *ch, struct spdk_nvmf_request *req);
-bool nvmf_bdev_ctrlr_get_dif_ctx(struct spdk_bdev_desc *desc, struct spdk_nvme_cmd *cmd,
+bool nvmf_bdev_ctrlr_get_dif_ctx(struct spdk_bdev *bdev, struct spdk_nvme_cmd *cmd,
 				 struct spdk_dif_ctx *dif_ctx);
 bool nvmf_bdev_zcopy_enabled(struct spdk_bdev *bdev);
 
@@ -516,19 +494,7 @@ void nvmf_ctrlr_set_fatal_status(struct spdk_nvmf_ctrlr *ctrlr);
 static inline bool
 nvmf_ctrlr_ns_is_visible(struct spdk_nvmf_ctrlr *ctrlr, uint32_t nsid)
 {
-	assert(nsid > 0 && nsid <= ctrlr->subsys->max_nsid);
 	return spdk_bit_array_get(ctrlr->visible_ns, nsid - 1);
-}
-
-static inline void
-nvmf_ctrlr_ns_set_visible(struct spdk_nvmf_ctrlr *ctrlr, uint32_t nsid, bool visible)
-{
-	assert(nsid > 0 && nsid <= ctrlr->subsys->max_nsid);
-	if (visible) {
-		spdk_bit_array_set(ctrlr->visible_ns, nsid - 1);
-	} else {
-		spdk_bit_array_clear(ctrlr->visible_ns, nsid - 1);
-	}
 }
 
 static inline struct spdk_nvmf_ns *

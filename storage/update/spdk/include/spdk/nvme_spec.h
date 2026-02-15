@@ -1721,7 +1721,6 @@ enum spdk_nvme_admin_opcode {
  * NVM command set opcodes
  */
 enum spdk_nvme_nvm_opcode {
-	SPDK_BPE_TOKENIZE				= 0xD4,
 	SPDK_NVME_OPC_FLUSH				= 0x00,
 	SPDK_NVME_OPC_WRITE				= 0x01,
 	SPDK_NVME_OPC_READ				= 0x02,
@@ -1742,6 +1741,8 @@ enum spdk_nvme_nvm_opcode {
 
 	SPDK_NVME_OPC_COPY				= 0x19,
 	SPDK_NVME_OPC_IO_MANAGEMENT_SEND		= 0x1D,
+
+	SPDK_BPE_TOKENIZE				= 0xD4,
 };
 
 /**
@@ -4489,7 +4490,6 @@ enum spdk_nvme_ctrlr_type {
 /** Mask of valid io flags mask */
 #define SPDK_NVME_IO_FLAGS_VALID_MASK 0xFFFF0003
 #define SPDK_NVME_IO_FLAGS_CDW12_MASK 0xFFFF0000
-#define SPDK_NVME_IO_FLAGS_PRCHK_MASK 0x1C000000
 
 /** Identify command buffer response size */
 #define SPDK_NVME_IDENTIFY_BUFLEN 4096
