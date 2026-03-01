@@ -2,6 +2,8 @@
 #include <pybind11/stl.h>  // std::vector, std::string 자동 변환
 #include <pybind11/functional.h>
 
+#include "arrow_text_dump.h"
+#include "extent-index.h"
 #include "io-uring.h"       // Ring, submit_nvme_passthru
 #include "fiemap_schedule.h" // convert_fiemap_to_nvme_segs
 
@@ -49,6 +51,56 @@ struct PendingInfo {
     void* buf;
     std::size_t buf_len;
 };
+
+bool has_arrow_extension(const std::string& path) {
+    const std::string suffix = ".arrow";
+    if (path.size() < suffix.size()) {
+        return false;
+    }
+    return path.compare(path.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+void build_input_segments(const std::string& input_path,
+                          std::vector<NvmeSeg>& in_segs,
+                          std::size_t& total_bytes,
+                          bool verbose) {
+    total_bytes = 0;
+    in_segs.clear();
+
+    if (!has_arrow_extension(input_path)) {
+        fiemap_schedule::convert_fiemap_to_nvme_segs(input_path, in_segs, total_bytes);
+        if (in_segs.empty()) {
+            throw std::runtime_error("no input segments found");
+        }
+        return;
+    }
+
+    ExtentIndexOptions options;
+    options.column = "text";
+    options.max_rows = -1;
+    options.max_extents = FIEMAP_MAX_EXTENTS;
+
+    ExtentIndex index;
+    std::string error;
+    if (!BuildArrowTextExtentIndex(input_path, options, &index, &error)) {
+        throw std::runtime_error("extent-index build failed: " + error);
+    }
+
+    for (const auto& buf : index.buffers) {
+        for (const auto& ext : buf.lba_extents) {
+            in_segs.push_back(NvmeSeg{ext.slba, ext.nblocks});
+            total_bytes += static_cast<std::size_t>(ext.nblocks) * FIEMAP_LBA_BYTES;
+        }
+    }
+
+    if (in_segs.empty()) {
+        throw std::runtime_error("extent-index produced no LBA segments");
+    }
+    if (verbose) {
+        std::fprintf(stderr, "[INFO] extent-index buffers=%zu segments=%zu\n",
+                     index.buffers.size(), in_segs.size());
+    }
+}
 
 void* alloc_io_buf(std::size_t len) {
     if (len == 0) {
@@ -165,197 +217,236 @@ py::dict tokenize_to_nvme(const std::string& dev_path,
                           std::size_t max_extents,
                           bool admin,
                           bool verbose) {
-    py::gil_scoped_release release;
-
     const std::string out_path = output_path.empty() ? (input_path + ".bin") : output_path;
     const std::size_t inflight = (max_inflight == 0) ? slots : max_inflight;
     if (inflight == 0) {
         throw std::runtime_error("max_inflight must be > 0");
     }
 
-    std::vector<NvmeSeg> in_segs;
     std::size_t total_bytes = 0;
-    fiemap_schedule::convert_fiemap_to_nvme_segs(input_path,
-                                                 in_segs,
-                                                 total_bytes,
-                                                 max_blocks_per_seg,
-                                                 max_extents);
-    if (in_segs.empty()) {
-        throw std::runtime_error("no input segments found");
-    }
-
-    std::string err;
-    if (!ensure_output_file(out_path, total_bytes, err)) {
-        throw std::runtime_error(err);
-    }
-
-    std::vector<NvmeSeg> out_segs;
-    std::size_t out_bytes = 0;
-    fiemap_schedule::convert_fiemap_to_nvme_segs(out_path,
-                                                 out_segs,
-                                                 out_bytes,
-                                                 max_blocks_per_seg,
-                                                 max_extents);
-    if (out_bytes < total_bytes) {
-        throw std::runtime_error("output file too small for input");
-    }
-
-    std::vector<IoJob> jobs;
-    if (!build_jobs(in_segs, out_segs, jobs)) {
-        throw std::runtime_error("failed to map input to output segments");
-    }
-
-    const int dev_fd = ::open(dev_path.c_str(), O_RDWR | O_CLOEXEC);
-    if (dev_fd < 0) {
-        throw std::runtime_error(std::string("open dev failed: ") + std::strerror(errno));
-    }
-
-    Ring ring;
-    ring.init(queue_depth, true);
-    const std::uint32_t cmd_op = admin ? NVME_URING_CMD_ADMIN : NVME_URING_CMD_IO;
-    const std::size_t submit_batch = std::max<std::size_t>(1, inflight / 2);
-
-    std::unordered_map<std::uint64_t, PendingInfo> pending;
-    pending.reserve(inflight);
-
-    std::size_t inflight_cnt = 0;
-    std::size_t queued = 0;
-    std::uint64_t next_id = 1;
-    std::uint32_t slot_rr = 0;
     std::size_t errors = 0;
+    std::size_t segments = 0;
+    double elapsed_us = 0.0;
 
-    const double t0 = now_us();
+    {
+        py::gil_scoped_release release;
 
-    auto free_all_pending = [&]() {
-        for (auto& kv : pending) {
-            free_io_buf(kv.second.buf);
-        }
-        pending.clear();
-    };
-
-    auto submit_one = [&](const IoJob& job) -> int {
-        io_uring_sqe* sqe = io_uring_get_sqe(ring.raw());
-        if (!sqe) {
-            return -EAGAIN;
-        }
-
-        const std::size_t buf_len = static_cast<std::size_t>(job.nblocks) * FIEMAP_LBA_BYTES;
-        void* buf = alloc_io_buf(buf_len);
-        if (buf == nullptr) {
-            return -ENOMEM;
+        std::vector<NvmeSeg> in_segs;
+        if (has_arrow_extension(input_path)) {
+            build_input_segments(input_path, in_segs, total_bytes, verbose);
+        } else {
+            fiemap_schedule::convert_fiemap_to_nvme_segs(input_path,
+                                                         in_segs,
+                                                         total_bytes,
+                                                         max_blocks_per_seg,
+                                                         max_extents);
+            if (in_segs.empty()) {
+                throw std::runtime_error("no input segments found");
+            }
         }
 
-        const std::uint32_t slot = static_cast<std::uint32_t>(
-            slots == 0 ? 0 : (slot_rr % slots));
-        ++slot_rr;
+        std::string err;
+        if (!ensure_output_file(out_path, total_bytes, err)) {
+            throw std::runtime_error(err);
+        }
 
-        nvme_uring_cmd uc{};
-        fill_nvme_cmd(opcode, nsid, job.in_slba, job.nblocks, slot, job.out_slba,
-                      buf, static_cast<std::uint32_t>(buf_len), uc);
+        std::vector<NvmeSeg> out_segs;
+        std::size_t out_bytes = 0;
+        fiemap_schedule::convert_fiemap_to_nvme_segs(out_path,
+                                                     out_segs,
+                                                     out_bytes,
+                                                     max_blocks_per_seg,
+                                                     max_extents);
+        if (out_bytes < total_bytes) {
+            throw std::runtime_error("output file too small for input");
+        }
 
-        std::memset(sqe, 0, sizeof(*sqe));
-        sqe->opcode = IORING_OP_URING_CMD;
-        sqe->fd = dev_fd;
-        sqe->cmd_op = cmd_op;
-        sqe->user_data = next_id;
-        std::memcpy(sqe->cmd, &uc, sizeof(uc));
+        std::vector<IoJob> jobs;
+        if (!build_jobs(in_segs, out_segs, jobs)) {
+            throw std::runtime_error("failed to map input to output segments");
+        }
+        segments = jobs.size();
 
-        pending.emplace(next_id, PendingInfo{job.in_slba, job.out_slba, job.nblocks, buf, buf_len});
-        ++next_id;
-        ++queued;
-        ++inflight_cnt;
-        return 0;
-    };
+        const int dev_fd = ::open(dev_path.c_str(), O_RDWR | O_CLOEXEC);
+        if (dev_fd < 0) {
+            throw std::runtime_error(std::string("open dev failed: ") + std::strerror(errno));
+        }
 
-    auto submit_queued = [&]() -> bool {
-        if (queued == 0) {
+        Ring ring;
+        ring.init(queue_depth, true);
+        const std::uint32_t cmd_op = admin ? NVME_URING_CMD_ADMIN : NVME_URING_CMD_IO;
+        const std::size_t submit_batch = std::max<std::size_t>(1, inflight / 2);
+
+        std::unordered_map<std::uint64_t, PendingInfo> pending;
+        pending.reserve(inflight);
+
+        std::size_t inflight_cnt = 0;
+        std::size_t queued = 0;
+        std::uint64_t next_id = 1;
+        std::uint32_t slot_rr = 0;
+
+        const double t0 = now_us();
+
+        auto free_all_pending = [&]() {
+            for (auto& kv : pending) {
+                free_io_buf(kv.second.buf);
+            }
+            pending.clear();
+        };
+
+        auto submit_one = [&](const IoJob& job) -> int {
+            io_uring_sqe* sqe = io_uring_get_sqe(ring.raw());
+            if (!sqe) {
+                return -EAGAIN;
+            }
+
+            const std::size_t buf_len = static_cast<std::size_t>(job.nblocks) * FIEMAP_LBA_BYTES;
+            void* buf = alloc_io_buf(buf_len);
+            if (buf == nullptr) {
+                return -ENOMEM;
+            }
+
+            const std::uint32_t slot = static_cast<std::uint32_t>(
+                slots == 0 ? 0 : (slot_rr % slots));
+            ++slot_rr;
+
+            nvme_uring_cmd uc{};
+            fill_nvme_cmd(opcode, nsid, job.in_slba, job.nblocks, slot, job.out_slba,
+                          buf, static_cast<std::uint32_t>(buf_len), uc);
+
+            std::memset(sqe, 0, sizeof(*sqe));
+            sqe->opcode = IORING_OP_URING_CMD;
+            sqe->fd = dev_fd;
+            sqe->cmd_op = cmd_op;
+            sqe->user_data = next_id;
+            std::memcpy(sqe->cmd, &uc, sizeof(uc));
+
+            pending.emplace(next_id, PendingInfo{job.in_slba, job.out_slba, job.nblocks, buf, buf_len});
+            ++next_id;
+            ++queued;
+            ++inflight_cnt;
+            return 0;
+        };
+
+        auto submit_queued = [&]() -> bool {
+            if (queued == 0) {
+                return true;
+            }
+            const int rc = io_uring_submit(ring.raw());
+            if (rc < 0) {
+                if (verbose) {
+                    std::fprintf(stderr, "io_uring_submit failed: %s\n", std::strerror(-rc));
+                }
+                return false;
+            }
+            queued = 0;
             return true;
-        }
-        const int rc = io_uring_submit(ring.raw());
-        if (rc < 0) {
-            if (verbose) {
-                std::fprintf(stderr, "io_uring_submit failed: %s\n", std::strerror(-rc));
+        };
+
+        auto reap_one = [&]() -> bool {
+            io_uring_cqe* cqe = nullptr;
+            const int rc = io_uring_wait_cqe(ring.raw(), &cqe);
+            if (rc < 0) {
+                if (verbose) {
+                    std::fprintf(stderr, "io_uring_wait_cqe failed: %s\n", std::strerror(-rc));
+                }
+                return false;
             }
-            return false;
-        }
-        queued = 0;
-        return true;
-    };
 
-    auto reap_one = [&]() -> bool {
-        io_uring_cqe* cqe = nullptr;
-        const int rc = io_uring_wait_cqe(ring.raw(), &cqe);
-        if (rc < 0) {
-            if (verbose) {
-                std::fprintf(stderr, "io_uring_wait_cqe failed: %s\n", std::strerror(-rc));
+            bool nvme_status_err = false;
+            if (ring.cqe32_enabled()) {
+                const auto* ext = reinterpret_cast<const std::uint32_t*>(cqe->big_cqe);
+                const std::uint32_t dw3 = ext[3];
+                const std::uint16_t status_field = static_cast<std::uint16_t>((dw3 >> 17) & 0xFFFF);
+                nvme_status_err = (status_field != 0);
             }
-            return false;
+
+            if (cqe->res < 0 || nvme_status_err) {
+                ++errors;
+            }
+
+            const auto it = pending.find(cqe->user_data);
+            if (it != pending.end()) {
+                free_io_buf(it->second.buf);
+                pending.erase(it);
+            }
+            io_uring_cqe_seen(ring.raw(), cqe);
+            if (inflight_cnt > 0) {
+                --inflight_cnt;
+            }
+            return true;
+        };
+
+        bool ok = true;
+        for (const auto& job : jobs) {
+            while (inflight_cnt >= inflight) {
+                if (!submit_queued()) { ok = false; break; }
+                if (!reap_one()) { ok = false; break; }
+            }
+            if (!ok) break;
+
+            int rc = submit_one(job);
+            if (rc == -EAGAIN) {
+                if (!submit_queued()) { ok = false; break; }
+                if (!reap_one()) { ok = false; break; }
+                rc = submit_one(job);
+            }
+            if (rc < 0) { ok = false; break; }
+
+            if (queued >= submit_batch) {
+                if (!submit_queued()) { ok = false; break; }
+            }
         }
 
-        bool nvme_status_err = false;
-        if (ring.cqe32_enabled()) {
-            const auto* ext = reinterpret_cast<const std::uint32_t*>(cqe->big_cqe);
-            const std::uint32_t dw3 = ext[3];
-            const std::uint16_t status_field = static_cast<std::uint16_t>((dw3 >> 17) & 0xFFFF);
-            nvme_status_err = (status_field != 0);
-        }
-
-        if (cqe->res < 0 || nvme_status_err) {
-            ++errors;
-        }
-
-        const auto it = pending.find(cqe->user_data);
-        if (it != pending.end()) {
-            free_io_buf(it->second.buf);
-            pending.erase(it);
-        }
-        io_uring_cqe_seen(ring.raw(), cqe);
-        if (inflight_cnt > 0) {
-            --inflight_cnt;
-        }
-        return true;
-    };
-
-    bool ok = true;
-    for (const auto& job : jobs) {
-        while (inflight_cnt >= inflight) {
-            if (!submit_queued()) { ok = false; break; }
+        if (ok && !submit_queued()) ok = false;
+        while (ok && inflight_cnt > 0) {
             if (!reap_one()) { ok = false; break; }
         }
-        if (!ok) break;
 
-        int rc = submit_one(job);
-        if (rc == -EAGAIN) {
-            if (!submit_queued()) { ok = false; break; }
-            if (!reap_one()) { ok = false; break; }
-            rc = submit_one(job);
+        free_all_pending();
+        ::close(dev_fd);
+
+        if (!ok) {
+            throw std::runtime_error("tokenize_to_nvme failed");
         }
-        if (rc < 0) { ok = false; break; }
 
-        if (queued >= submit_batch) {
-            if (!submit_queued()) { ok = false; break; }
-        }
+        const double t1 = now_us();
+        elapsed_us = t1 - t0;
     }
 
-    if (ok && !submit_queued()) ok = false;
-    while (ok && inflight_cnt > 0) {
-        if (!reap_one()) { ok = false; break; }
-    }
-
-    free_all_pending();
-    ::close(dev_fd);
-
-    if (!ok) {
-        throw std::runtime_error("tokenize_to_nvme failed");
-    }
-
-    const double t1 = now_us();
     py::dict result;
-    result["segments"] = jobs.size();
+    result["segments"] = segments;
     result["total_bytes"] = total_bytes;
     result["errors"] = errors;
-    result["elapsed_us"] = t1 - t0;
+    result["elapsed_us"] = elapsed_us;
     result["out_path"] = out_path;
+    return result;
+}
+
+py::dict arrow_text_dump(const std::string& input_path,
+                         const std::string& output_path,
+                         const std::string& column,
+                         const std::string& index_path,
+                         const std::string& delimiter,
+                         std::int64_t max_rows) {
+    ArrowDumpStats stats{};
+    std::string error;
+    if (!DumpArrowText(input_path,
+                       output_path,
+                       column,
+                       index_path,
+                       delimiter,
+                       max_rows,
+                       &stats,
+                       &error)) {
+        throw std::runtime_error(error);
+    }
+
+    py::dict result;
+    result["rows"] = stats.rows;
+    result["output_bytes"] = stats.output_bytes;
+    result["output_path"] = output_path;
+    result["index_path"] = index_path;
     return result;
 }
 
@@ -378,5 +469,17 @@ PYBIND11_MODULE(ndt_compute, m) {
         py::arg("admin") = false,
         py::arg("verbose") = false,
         "Run FIEMAP -> NVMe io_uring submit pipeline. Returns stats dict."
+    );
+
+    m.def(
+        "arrow_text_dump",
+        &arrow_text_dump,
+        py::arg("input_path"),
+        py::arg("output_path"),
+        py::arg("column") = "text",
+        py::arg("index_path") = "",
+        py::arg("delimiter") = "\n",
+        py::arg("max_rows") = -1,
+        "Dump Arrow IPC file column to a delimited text file. Returns stats dict."
     );
 }
