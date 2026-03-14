@@ -1,0 +1,154 @@
+{
+  "doc_version": "1.0.0",
+  "last_updated": "2026-02-27",
+  "project": "NDT-BPE",
+  "scope": "Full project architecture summary (compute + storage + scripts)",
+  "architecture_overview": {
+    "goal": "Near-Data Processing for BPE tokenization in a disaggregated storage environment using NVMe passthrough (opcode 0xD4).",
+    "environment": "Host issues custom NVMe commands; data is processed on storage server/runtime; data does not round-trip to host.",
+    "core_idea": "Host computes file LBA extents and sends NVMe passthrough; storage/runtime consumes LBA ranges and performs tokenization.",
+    "primary_data_formats": [
+      "TXT (raw byte stream)",
+      "Arrow IPC (structured dataset shards)"
+    ]
+  },
+  "major_components": [
+    {
+      "name": "compute (host-side)",
+      "path": "compute",
+      "responsibilities": [
+        "Resolve file extents via FIEMAP and convert to NVMe LBA segments.",
+        "Submit NVMe passthrough commands via io_uring (opcode 0xD4).",
+        "Provide Python bindings (pybind11) for host control scripts.",
+        "Optional host-side Arrow metadata processing for extent-index generation."
+      ],
+      "key_modules": [
+        {
+          "module": "FIEMAP scheduler",
+          "files": ["compute/include/fiemap_schedule.h", "compute/src/fiemap_schedule.cpp"],
+          "status": "implemented",
+          "notes": "Converts filesystem extents to {slba, nblocks} segments."
+        },
+        {
+          "module": "NVMe passthrough (io_uring)",
+          "files": ["compute/include/io-uring.h", "compute/src/io-uring.cpp"],
+          "status": "implemented",
+          "notes": "Submits IORING_OP_URING_CMD with custom opcode 0xD4."
+        },
+        {
+          "module": "Host CLI",
+          "files": ["compute/src/main.cpp"],
+          "status": "implemented",
+          "notes": "FIEMAP -> io_uring pipeline; outputs to .bin file."
+        },
+        {
+          "module": "Python bindings",
+          "files": ["compute/src/bindings.cpp", "compute/setup.py"],
+          "status": "implemented",
+          "notes": "Exports tokenize_to_nvme() and arrow_text_dump(); .arrow input triggers extent-index path internally."
+        },
+        {
+          "module": "Arrow text dump",
+          "files": ["compute/src/arrow_text_dump.cpp", "compute/src/arrow_text_dump_lib.cpp", "compute/include/arrow_text_dump.h"],
+          "status": "implemented",
+          "notes": "Host-side Arrow IPC -> text conversion (CLI + pybind)."
+        },
+        {
+          "module": "Extent-index generation",
+          "files": ["compute/include/extent-index.h", "compute/src/extent-index.cpp", "compute/src/extent_index_main.cpp"],
+          "status": "implemented (C++ only)",
+          "notes": "Maps Arrow text column byte-ranges to LBA extents without exporting to Python."
+        }
+      ]
+    },
+    {
+      "name": "storage/runtime (storage-side)",
+      "path": "storage/runtime",
+      "responsibilities": [
+        "Consume shared memory buffers and message queue requests.",
+        "Run BPE tokenization on storage server side.",
+        "Maintain runtime stats in shared memory."
+      ],
+      "key_modules": [
+        {
+          "module": "IPC + shared memory",
+          "files": ["storage/runtime/include/common.h", "storage/runtime/src/common.cpp"],
+          "status": "implemented",
+          "notes": "SysV shm + msg queue; slot-based request handling."
+        },
+        {
+          "module": "BPE tokenizer",
+          "files": ["storage/runtime/include/bpe_tokenizer.h", "storage/runtime/src/bpe_tokenizer.cpp"],
+          "status": "implemented",
+          "notes": "tokenizers_cpp 기반 BPE 처리."
+        },
+        {
+          "module": "Runtime main",
+          "files": ["storage/runtime/src/main.cpp", "storage/runtime/src/main2.cpp"],
+          "status": "implemented",
+          "notes": "MessageQueueDispatcher loop."
+        }
+      ]
+    },
+    {
+      "name": "storage/spdk",
+      "path": "storage/spdk",
+      "responsibilities": [
+        "SPDK NVMe-oF target tooling and scripts (external subtree)."
+      ],
+      "status": "present"
+    },
+    {
+      "name": "scripts (experiments/host workflows)",
+      "path": "scripts",
+      "responsibilities": [
+        "Download dataset (OpenWebText) and save in Arrow format.",
+        "Run sharded tokenization experiments and metrics.",
+        "Thread sweep experiments and logging."
+      ],
+      "key_scripts": [
+        {
+          "script": "scripts/download_data.py",
+          "purpose": "Download OpenWebText and save to Arrow shards."
+        },
+        {
+          "script": "scripts/shard_tokenize_paralle.py",
+          "purpose": "Shard-level tokenization experiments with timing metrics."
+        },
+        {
+          "script": "scripts/run_shard_tokenize_sweep.py",
+          "purpose": "Thread sweep wrapper for shard_tokenize_paralle.py."
+        }
+      ]
+    }
+  ],
+  "data_flow_summary": {
+    "txt_path": [
+      "Host gets FIEMAP extents for TXT file.",
+      "Host sends NVMe passthrough (opcode 0xD4) for LBA ranges.",
+      "Storage/runtime reads raw bytes and tokenizes in-place."
+    ],
+    "arrow_path_recommended": [
+      "Host parses Arrow metadata to locate text column byte-ranges.",
+      "Host maps byte-ranges -> LBA extents (extent-index).",
+      "Host sends LBA extents via NVMe passthrough.",
+      "Storage/runtime processes LBA ranges without Arrow parser."
+    ]
+  },
+  "current_implementation_stage": {
+    "extent_index_host_side": "Implemented in C++ (compute/src/extent-index.cpp).",
+    "python_api": "tokenize_to_nvme now accepts .arrow and internally uses extent-index path; extent-index is not exposed to Python.",
+    "runtime_arrow_parser": "Not implemented (by design; storage/runtime stays lightweight).",
+    "padding_handling": "Assumed handled in SPDK/runtime; extent-index includes block_offset + byte_length for precise trimming."
+  },
+  "known_gaps_and_risks": [
+    "Extent-index currently relies on Arrow buffers being mmapped zero-copy to compute file offsets.",
+    "Row-level reconstruction requires offsets buffer handling if strict row boundaries are needed.",
+    "Sparse files or holes can cause FIEMAP coverage gaps; current extent-index treats uncovered ranges as errors."
+  ],
+  "recommended_next_steps": [
+    "Define a stable on-disk extent-index schema (JSON or binary).",
+    "Add runtime consumption of extent-index (LBA + byte trimming).",
+    "Add tests comparing TXT pipeline vs Arrow+extent-index pipeline."
+  ]
+}

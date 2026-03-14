@@ -1,0 +1,123 @@
+{
+  "doc_version": "1.0.0",
+  "last_updated": "2026-02-27",
+  "module": "NDT-BPE/compute",
+  "title": "Disaggregation Architecture + Extent-Index Plan (Arrow) + Current Implementation Status",
+  "context_summary": {
+    "environment": "Disaggregation: storage server processes data; host issues custom NVMe commands to storage device.",
+    "custom_opcode": "0xD4",
+    "data_path": "Data does not return to host; storage/runtime processes data in-place using LBA ranges.",
+    "host_role": "Compute LBA extents and send NVMe passthrough commands (io_uring + nvme_uring_cmd)."
+  },
+  "architecture_understanding": {
+    "components": [
+      {
+        "name": "Host (compute)",
+        "responsibilities": [
+          "Resolve file path to physical extents (FIEMAP).",
+          "Convert extents to LBA segments (slba, nblocks).",
+          "Issue NVMe passthrough commands (opcode 0xD4) over io_uring.",
+          "(Optional) For Arrow: compute extent index from metadata without moving full data to host."
+        ]
+      },
+      {
+        "name": "Storage server + storage/runtime",
+        "responsibilities": [
+          "Receive NVMe passthrough requests for LBA ranges.",
+          "Process data in-place on storage side.",
+          "Avoid host data transfer in disaggregated path."
+        ]
+      },
+      {
+        "name": "Dataset files",
+        "responsibilities": [
+          "TXT: raw bytes, direct LBA read is valid.",
+          "Arrow: structured IPC with metadata/footer and column buffers.",
+          "Arrow requires mapping of text column buffer ranges to LBA extents for runtime that does not parse Arrow."
+        ]
+      }
+    ],
+    "data_flow": [
+      "Host reads filesystem metadata (FIEMAP) -> LBA extents.",
+      "Host sends NVMe opcode=0xD4 with {slba, nblocks}.",
+      "Storage/runtime processes data at those LBA ranges.",
+      "Result is written to storage-side output buffers/files (no host round-trip)."
+    ]
+  },
+  "arrow_extent_index_plan": {
+    "problem_statement": "Storage/runtime should not parse Arrow; host must precompute text column LBA extents without copying full data to host.",
+    "key_point": "TXT LBA extents do not exist unless a TXT file is materialized. For Arrow, we must map column buffer byte-ranges -> LBA extents.",
+    "host_side_steps": [
+      "Parse Arrow IPC metadata/record batch metadata.",
+      "Locate text column buffer byte ranges (offsets/data buffers).",
+      "Translate file byte ranges -> LBA extents using FIEMAP.",
+      "Emit an extent-index manifest (for runtime to read by LBA only)."
+    ],
+    "data_transfer": {
+      "full_data_transfer": "Not required.",
+      "minimum_required": "Arrow metadata + (optional) offsets buffer if row-level mapping is required.",
+      "note": "Offsets buffers are much smaller than full text data and can be read by host without violating disaggregation goals."
+    },
+    "runtime_requirements": [
+      "No Arrow parser needed if it consumes extent-index only.",
+      "Runtime must read LBA extents and interpret them as raw text chunks (based on index)."
+    ],
+    "alternatives": [
+      {
+        "option": "Arrow -> TXT conversion",
+        "pros": ["Simpler runtime.", "Reuse existing TXT pipeline."],
+        "cons": ["Extra pre-processing cost and storage overhead.", "Weaker disaggregation story in paper."]
+      },
+      {
+        "option": "Arrow parser in runtime",
+        "pros": ["No host metadata pre-processing.", "Direct Arrow handling at storage."],
+        "cons": ["Complex runtime; heavier footprint on storage server."]
+      }
+    ],
+    "paper_positioning": {
+      "recommended": "Keep Arrow original + host-generated extent index + runtime LBA-only processing.",
+      "rationale": [
+        "Preserves original dataset format.",
+        "Minimizes storage-side complexity.",
+        "Aligns with control-plane (host) vs data-plane (storage) separation.",
+        "Avoids full host data movement."
+      ]
+    }
+  },
+  "current_implementation_status": {
+    "compute": {
+      "fiemap_and_extents": "Implemented (FIEMAP -> LBA segments).",
+      "nvme_passthrough": "Implemented via io_uring (opcode 0xD4 supported).",
+      "python_bindings": "Implemented (ndt_compute).",
+      "arrow_text_dump": "Implemented as host-side Arrow -> TXT converter (CLI + pybind).",
+      "arrow_extent_index": "Not implemented yet (planned)."
+    },
+    "storage_runtime": {
+      "text_only_pipeline": "Implemented (assumes raw text in shared memory).",
+      "arrow_parsing": "Not implemented (considered too heavy).",
+      "extent_index_consumption": "Not implemented yet (planned)."
+    }
+  },
+  "artifacts": {
+    "code_paths": [
+      "compute/include/fiemap_schedule.h",
+      "compute/src/fiemap_schedule.cpp",
+      "compute/src/main.cpp",
+      "compute/src/bindings.cpp",
+      "compute/src/arrow_text_dump.cpp",
+      "compute/src/arrow_text_dump_lib.cpp",
+      "compute/include/arrow_text_dump.h"
+    ],
+    "datasets_example": "scripts/openwebtext_disk/data-00000-of-00080.arrow"
+  },
+  "open_questions": [
+    "Extent-index format: per-record vs per-batch granularity?",
+    "Runtime contract: how to interpret extent-index into logical text rows?",
+    "Index storage: embed inside Arrow metadata vs sidecar JSON/Binary?"
+  ],
+  "next_steps": [
+    "Define extent-index schema (JSON/Binary) with fields: file, column, batch_id, byte_range, lba_extents.",
+    "Implement host-side Arrow metadata parser to emit extent-index.",
+    "Update storage/runtime to consume extent-index and read LBA ranges."
+  ]
+}
