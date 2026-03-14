@@ -14,11 +14,14 @@ else
   exit 1
 fi
 
-: "${TARGET_IP:?Missing TARGET_IP}"
 : "${TARGET_PORT:?Missing TARGET_PORT}"
 : "${NQN:?Missing NQN}"
 : "${MNT:?Missing MNT}"
 : "${DEV:?Missing DEV}"
+if [[ -z "${STORAGE_IP-}" && -z "${STORAGE_IPS-}" ]]; then
+  echo "[FATAL] Missing STORAGE_IP or STORAGE_IPS"
+  exit 1
+fi
 
 echo "[INFO] Unmount ${MNT} if mounted..."
 if mountPOINT=$(mount | grep "${MNT}"); then
@@ -28,11 +31,30 @@ fi
 echo "[INFO] Disconnect all NVMe-oF..."
 sudo nvme disconnect-all || true
 
-echo "[INFO] Discover on ${TARGET_IP}:${TARGET_PORT} ..."
-sudo nvme discover -t tcp -a "${TARGET_IP}" -s "${TARGET_PORT}"
+IPS=()
+if [[ -n "${STORAGE_IPS-}" ]]; then
+  read -r -a IPS <<< "${STORAGE_IPS}"
+else
+  IPS=("${STORAGE_IP}")
+fi
 
-echo "[INFO] Connect NQN=${NQN} ..."
-sudo nvme connect -t tcp -a "${TARGET_IP}" -s "${TARGET_PORT}" -n "${NQN}"
+connected=0
+for ip in "${IPS[@]}"; do
+  echo "[INFO] Discover on ${ip}:${TARGET_PORT} ..."
+  if sudo nvme discover -t tcp -a "${ip}" -s "${TARGET_PORT}"; then
+    echo "[INFO] Connect NQN=${NQN} ..."
+    if sudo nvme connect -t tcp -a "${ip}" -s "${TARGET_PORT}" -n "${NQN}"; then
+      STORAGE_IP="${ip}"
+      connected=1
+      break
+    fi
+  fi
+done
+
+if [[ "${connected}" -ne 1 ]]; then
+  echo "[FATAL] Failed to connect to any target in TARGET_IPS"
+  exit 1
+fi
 
 # [추가] 커널이 장치 노드(/dev/nvme0n1)를 생성할 때까지 대기 (Race Condition 방지)
 echo "[INFO] Waiting for device ${DEV} to appear..."
