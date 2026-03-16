@@ -117,3 +117,4 @@ print-tokenizer-deps:
 
 clean:
 	rm -rf $(BUILD_DIR)
+CXXFLAGS += $(shell python3-config --includes)

@@ -4,7 +4,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 JOBS="${JOBS:-$(nproc)}"
-
 LIBURING_DIR="${SCRIPT_DIR}/third_party/liburing"
 TOKENIZERS_CPP_DIR="${SCRIPT_DIR}/third_party/tokenizers-cpp"
 TOKENIZERS_CPP_BUILD_DIR="${TOKENIZERS_CPP_DIR}/build"
