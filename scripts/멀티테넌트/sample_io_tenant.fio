@@ -1,0 +1,14 @@
+[global]
+ioengine=libaio
+direct=1
+time_based=1
+runtime=60
+group_reporting=1
+filename=/mnt/nvme/qos_testfile
+size=4G
+
+[qos_randread]
+rw=randread
+bs=4k
+iodepth=32
+numjobs=1

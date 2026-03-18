@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <set>
 #include <sstream>
 #include <string>
@@ -41,7 +42,10 @@ double bytes_to_mb(std::uint64_t bytes) {
 }
 
 void print_usage(const char* prog) {
-    std::printf("Usage: %s [--interval-ms N] [--cpu-cores 0-5]\n", prog);
+    std::printf(
+        "Usage: %s [--interval-ms N] [--cpu-cores 0-5] [--net-iface IFACE] "
+        "[--block-dev DEV] [--csv-path FILE] [--no-clear]\n",
+        prog);
 }
 
 struct CpuTimes {
@@ -53,6 +57,22 @@ struct CpuTimes {
     std::uint64_t irq = 0;
     std::uint64_t softirq = 0;
     std::uint64_t steal = 0;
+};
+
+struct NetCounters {
+    std::uint64_t rx_bytes = 0;
+    std::uint64_t tx_bytes = 0;
+    std::uint64_t rx_packets = 0;
+    std::uint64_t tx_packets = 0;
+    std::uint64_t rx_drop = 0;
+    std::uint64_t tx_drop = 0;
+};
+
+struct BlockCounters {
+    std::uint64_t read_sectors = 0;
+    std::uint64_t write_sectors = 0;
+    std::uint64_t io_ticks_ms = 0;
+    std::uint64_t in_flight = 0;
 };
 
 bool read_proc_stat(std::vector<CpuTimes>& out) {
@@ -80,6 +100,58 @@ bool read_proc_stat(std::vector<CpuTimes>& out) {
         out[cpu_id] = t;
     }
     return true;
+}
+
+bool read_u64_file(const std::string& path, std::uint64_t& out) {
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        return false;
+    }
+    in >> out;
+    return !in.fail();
+}
+
+bool read_net_counters(const std::string& iface, NetCounters& out) {
+    if (iface.empty()) {
+        return false;
+    }
+    const std::string base = "/sys/class/net/" + iface + "/statistics/";
+    return read_u64_file(base + "rx_bytes", out.rx_bytes) &&
+           read_u64_file(base + "tx_bytes", out.tx_bytes) &&
+           read_u64_file(base + "rx_packets", out.rx_packets) &&
+           read_u64_file(base + "tx_packets", out.tx_packets) &&
+           read_u64_file(base + "rx_dropped", out.rx_drop) &&
+           read_u64_file(base + "tx_dropped", out.tx_drop);
+}
+
+bool read_block_counters(const std::string& block_dev, BlockCounters& out) {
+    if (block_dev.empty()) {
+        return false;
+    }
+    std::ifstream in("/sys/class/block/" + block_dev + "/stat");
+    if (!in.is_open()) {
+        return false;
+    }
+
+    std::uint64_t read_ios = 0;
+    std::uint64_t read_merges = 0;
+    std::uint64_t read_ticks = 0;
+    std::uint64_t write_ios = 0;
+    std::uint64_t write_merges = 0;
+    std::uint64_t write_ticks = 0;
+    std::uint64_t time_in_queue = 0;
+    in >> read_ios
+       >> read_merges
+       >> out.read_sectors
+       >> read_ticks
+       >> write_ios
+       >> write_merges
+       >> out.write_sectors
+       >> write_ticks
+       >> out.in_flight
+       >> out.io_ticks_ms
+       >> time_in_queue;
+    return !in.fail();
 }
 
 std::vector<int> parse_cores(const std::string& spec) {
@@ -119,16 +191,44 @@ double cpu_usage(const CpuTimes& prev, const CpuTimes& cur) {
     return 100.0 * busy / static_cast<double>(total_delta);
 }
 
+double jains_fairness_index(const std::vector<double>& values) {
+    if (values.empty()) {
+        return 0.0;
+    }
+    double sum = 0.0;
+    double sq_sum = 0.0;
+    for (double v : values) {
+        sum += v;
+        sq_sum += v * v;
+    }
+    if (sq_sum == 0.0) {
+        return 0.0;
+    }
+    return (sum * sum) / (static_cast<double>(values.size()) * sq_sum);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     int interval_ms = 1000;
     std::vector<int> cpu_cores = parse_cores("0-5");
+    std::string net_iface;
+    std::string block_dev;
+    std::string csv_path;
+    bool clear_screen = true;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--interval-ms") == 0 && i + 1 < argc) {
             interval_ms = std::max(100, std::atoi(argv[++i]));
         } else if (std::strcmp(argv[i], "--cpu-cores") == 0 && i + 1 < argc) {
             cpu_cores = parse_cores(argv[++i]);
+        } else if (std::strcmp(argv[i], "--net-iface") == 0 && i + 1 < argc) {
+            net_iface = argv[++i];
+        } else if (std::strcmp(argv[i], "--block-dev") == 0 && i + 1 < argc) {
+            block_dev = argv[++i];
+        } else if (std::strcmp(argv[i], "--csv-path") == 0 && i + 1 < argc) {
+            csv_path = argv[++i];
+        } else if (std::strcmp(argv[i], "--no-clear") == 0) {
+            clear_screen = false;
         } else if (std::strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -165,10 +265,32 @@ int main(int argc, char** argv) {
     std::uint64_t prev_out = 0;
     std::vector<CpuTimes> prev_cpu;
     std::vector<CpuTimes> cur_cpu;
+    NetCounters prev_net{};
+    NetCounters cur_net{};
+    BlockCounters prev_blk{};
+    BlockCounters cur_blk{};
+    bool have_prev_net = read_net_counters(net_iface, prev_net);
+    bool have_prev_blk = read_block_counters(block_dev, prev_blk);
+    std::array<std::uint64_t, NUM_SLOTS> prev_slot_resp{};
+
+    std::ofstream csv;
+    if (!csv_path.empty()) {
+        csv.open(csv_path, std::ios::out | std::ios::trunc);
+        if (!csv.is_open()) {
+            std::perror("[BPE-MON] csv open");
+            return 1;
+        }
+        csv << "ts_us,req_total,resp_total,outstanding,last_latency_us,"
+               "req_per_s,resp_per_s,in_MBps,out_MBps,fairness_resp,"
+               "cpu_busy_all,net_rx_MBps,net_tx_MBps,net_rx_drop_delta,net_tx_drop_delta,"
+               "blk_read_MBps,blk_write_MBps,blk_util_pct,blk_in_flight\n";
+    }
 
     while (!g_stop) {
         cur_cpu.clear();
         const bool have_cpu = read_proc_stat(cur_cpu);
+        const bool have_net = read_net_counters(net_iface, cur_net);
+        const bool have_blk = read_block_counters(block_dev, cur_blk);
         const std::uint64_t req_total = load_u64(&stats->req_total);
         const std::uint64_t resp_total = load_u64(&stats->resp_total);
         const std::uint64_t bytes_in = load_u64(&stats->bytes_in);
@@ -179,23 +301,66 @@ int main(int argc, char** argv) {
         const std::uint64_t last_req_id = load_u64(&stats->last_req_id);
         const std::uint32_t last_slot = load_u32(&stats->last_slot);
         const std::uint32_t last_resp_bytes = load_u32(&stats->last_resp_bytes);
+        const std::uint64_t outstanding = (req_total >= resp_total) ? (req_total - resp_total) : 0;
 
         const double delta_req = static_cast<double>(req_total - prev_req) * 1000.0 / interval_ms;
         const double delta_resp = static_cast<double>(resp_total - prev_resp) * 1000.0 / interval_ms;
         const double delta_in_mb = bytes_to_mb(bytes_in - prev_in) * 1000.0 / interval_ms;
         const double delta_out_mb = bytes_to_mb(bytes_out - prev_out) * 1000.0 / interval_ms;
+        double net_rx_mb = 0.0;
+        double net_tx_mb = 0.0;
+        std::uint64_t net_rx_drop_delta = 0;
+        std::uint64_t net_tx_drop_delta = 0;
+        if (have_net && have_prev_net) {
+            net_rx_mb = bytes_to_mb(cur_net.rx_bytes - prev_net.rx_bytes) * 1000.0 / interval_ms;
+            net_tx_mb = bytes_to_mb(cur_net.tx_bytes - prev_net.tx_bytes) * 1000.0 / interval_ms;
+            net_rx_drop_delta = cur_net.rx_drop - prev_net.rx_drop;
+            net_tx_drop_delta = cur_net.tx_drop - prev_net.tx_drop;
+        }
+        double blk_read_mb = 0.0;
+        double blk_write_mb = 0.0;
+        double blk_util_pct = 0.0;
+        if (have_blk && have_prev_blk) {
+            constexpr double kSectorBytes = 512.0;
+            blk_read_mb =
+                static_cast<double>(cur_blk.read_sectors - prev_blk.read_sectors) * kSectorBytes /
+                (1024.0 * 1024.0) * 1000.0 / interval_ms;
+            blk_write_mb =
+                static_cast<double>(cur_blk.write_sectors - prev_blk.write_sectors) * kSectorBytes /
+                (1024.0 * 1024.0) * 1000.0 / interval_ms;
+            blk_util_pct =
+                std::min(100.0, static_cast<double>(cur_blk.io_ticks_ms - prev_blk.io_ticks_ms) *
+                                    100.0 / static_cast<double>(interval_ms));
+        }
 
-        std::printf("\033[2J\033[H");
+        std::vector<double> slot_resp_deltas;
+        slot_resp_deltas.reserve(NUM_SLOTS);
+        std::array<std::uint64_t, NUM_SLOTS> cur_slot_resp{};
+        for (std::size_t s = 0; s < NUM_SLOTS; ++s) {
+            cur_slot_resp[s] = load_u64(&stats->per_slot_resp[s]);
+            slot_resp_deltas.push_back(
+                static_cast<double>(cur_slot_resp[s] - prev_slot_resp[s]));
+        }
+        const double fairness_resp = jains_fairness_index(slot_resp_deltas);
+        double cpu_busy_all = 0.0;
+        if (have_cpu && !prev_cpu.empty() && !cur_cpu.empty()) {
+            cpu_busy_all = cpu_usage(prev_cpu[0], cur_cpu[0]);
+        }
+
+        if (clear_screen) {
+            std::printf("\033[2J\033[H");
+        }
         std::printf("BPE Runtime Monitor (interval=%dms)\n", interval_ms);
         std::printf("------------------------------------------------------------\n");
         std::printf("Totals   req=%" PRIu64 "  resp=%" PRIu64 "  in=%.2fMB  out=%.2fMB\n",
                     req_total, resp_total, bytes_to_mb(bytes_in), bytes_to_mb(bytes_out));
-        std::printf("Rates    req/s=%.1f  resp/s=%.1f  in=%.2fMB/s  out=%.2fMB/s\n",
-                    delta_req, delta_resp, delta_in_mb, delta_out_mb);
+        std::printf("Rates    req/s=%.1f  resp/s=%.1f  in=%.2fMB/s  out=%.2fMB/s  outstanding=%" PRIu64 "\n",
+                    delta_req, delta_resp, delta_in_mb, delta_out_mb, outstanding);
         std::printf("Last     req_id=%" PRIu64 " slot=%u resp_bytes=%u latency_us=%" PRIu64 "\n",
                     last_req_id, last_slot, last_resp_bytes, last_latency);
         std::printf("TS       start_us=%" PRIu64 " last_us=%" PRIu64 "\n",
                     start_ts, last_ts);
+        std::printf("Fairness resp_jain=%.3f\n", fairness_resp);
         if (have_cpu && !cpu_cores.empty()) {
             std::printf("CPU      ");
             for (std::size_t i = 0; i < cpu_cores.size(); ++i) {
@@ -214,6 +379,14 @@ int main(int argc, char** argv) {
             }
             std::printf("\n");
         }
+        if (have_net) {
+            std::printf("NET      iface=%s rx=%.2fMB/s tx=%.2fMB/s rx_drop=%" PRIu64 " tx_drop=%" PRIu64 "\n",
+                        net_iface.c_str(), net_rx_mb, net_tx_mb, net_rx_drop_delta, net_tx_drop_delta);
+        }
+        if (have_blk) {
+            std::printf("BLOCK    dev=%s read=%.2fMB/s write=%.2fMB/s util=%.0f%% inflight=%" PRIu64 "\n",
+                        block_dev.c_str(), blk_read_mb, blk_write_mb, blk_util_pct, cur_blk.in_flight);
+        }
         std::printf("------------------------------------------------------------\n");
         std::printf("Per-slot:\n");
         for (std::size_t s = 0; s < NUM_SLOTS; ++s) {
@@ -221,13 +394,42 @@ int main(int argc, char** argv) {
             const std::uint64_t s_resp = load_u64(&stats->per_slot_resp[s]);
             const std::uint64_t s_in = load_u64(&stats->per_slot_bytes_in[s]);
             const std::uint64_t s_out = load_u64(&stats->per_slot_bytes_out[s]);
+            const std::uint64_t s_outstanding = (s_req >= s_resp) ? (s_req - s_resp) : 0;
+            const double s_resp_rate =
+                static_cast<double>(cur_slot_resp[s] - prev_slot_resp[s]) * 1000.0 / interval_ms;
             if (s_req == 0 && s_resp == 0) {
                 continue;
             }
-            std::printf("  slot %2zu: req=%" PRIu64 " resp=%" PRIu64 " in=%.2fMB out=%.2fMB\n",
-                        s, s_req, s_resp, bytes_to_mb(s_in), bytes_to_mb(s_out));
+            std::printf("  slot %2zu: req=%" PRIu64 " resp=%" PRIu64 " outstd=%" PRIu64
+                        " resp/s=%.1f in=%.2fMB out=%.2fMB\n",
+                        s, s_req, s_resp, s_outstanding, s_resp_rate,
+                        bytes_to_mb(s_in), bytes_to_mb(s_out));
         }
         std::fflush(stdout);
+
+        if (csv.is_open()) {
+            csv << last_ts
+                << "," << req_total
+                << "," << resp_total
+                << "," << outstanding
+                << "," << last_latency
+                << "," << std::fixed << std::setprecision(3) << delta_req
+                << "," << delta_resp
+                << "," << delta_in_mb
+                << "," << delta_out_mb
+                << "," << fairness_resp
+                << "," << cpu_busy_all
+                << "," << net_rx_mb
+                << "," << net_tx_mb
+                << "," << net_rx_drop_delta
+                << "," << net_tx_drop_delta
+                << "," << blk_read_mb
+                << "," << blk_write_mb
+                << "," << blk_util_pct
+                << "," << cur_blk.in_flight
+                << "\n";
+            csv.flush();
+        }
 
         prev_req = req_total;
         prev_resp = resp_total;
@@ -236,6 +438,15 @@ int main(int argc, char** argv) {
         if (have_cpu) {
             prev_cpu = cur_cpu;
         }
+        if (have_net) {
+            prev_net = cur_net;
+            have_prev_net = true;
+        }
+        if (have_blk) {
+            prev_blk = cur_blk;
+            have_prev_blk = true;
+        }
+        prev_slot_resp = cur_slot_resp;
 
         std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
     }

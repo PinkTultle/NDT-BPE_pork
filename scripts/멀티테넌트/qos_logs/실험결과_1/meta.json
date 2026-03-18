@@ -1,0 +1,19 @@
+{
+  "timestamp": "2026-03-18T00:47:52",
+  "fio_job": "sample_io_tenant.fio",
+  "fio_bin": "/usr/bin/fio",
+  "input_dir": "/mnt/nvme/openwebtext_disk",
+  "input_glob": "*.arrow",
+  "ndp_output_dir": "/mnt/nvme/openweb_bin_ndp",
+  "dev_path": "/dev/ng0n1",
+  "ndp_slots": [
+    1,
+    2,
+    4,
+    8,
+    16
+  ],
+  "queue_depth": 64,
+  "max_inflight": 0,
+  "ndp_stop_timeout": 0.0
+}

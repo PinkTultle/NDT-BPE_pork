@@ -1,0 +1,124 @@
+{
+  "workers": 2,
+  "baseline": {
+    "run_id": 1,
+    "timestamp": "2026-03-11T01:03:02",
+    "input_dir": "/mnt/nvme/openwebtext_disk",
+    "output_dir": "/mnt/nvme/openwebtext_bin",
+    "backend": "cpu",
+    "model": "/home/doogunwo/Desktop/NDT-BPE/storage/runtime/model/bbpe_tokenizer.json",
+    "threads": 2,
+    "cold_cache": true,
+    "files": 80,
+    "total_input_bytes": 39770898240,
+    "total_output_bytes": 41064060588,
+    "total_tokens": 10266015147,
+    "elapsed_s": 7341.6070936908945,
+    "throughput_MBps": 5.166237270377608,
+    "throughput_tokens_per_s": 1398333.5005522475
+  },
+  "cpu": {
+    "logical_cpus": 12,
+    "avg_cpu_busy_pct_all": 17.25,
+    "avg_busy_core_equivalent": 2.07,
+    "efficiency_pct_vs_workers": 100.0,
+    "per_cpu": {
+      "all": {
+        "usr_pct": 16.23,
+        "sys_pct": 0.16,
+        "iowait_pct": 0.72,
+        "idle_pct": 82.75,
+        "busy_pct": 17.25
+      },
+      "0": {
+        "usr_pct": 30.6,
+        "sys_pct": 0.22,
+        "iowait_pct": 1.13,
+        "idle_pct": 68.03,
+        "busy_pct": 31.97
+      },
+      "1": {
+        "usr_pct": 16.78,
+        "sys_pct": 0.18,
+        "iowait_pct": 0.93,
+        "idle_pct": 82.1,
+        "busy_pct": 17.900000000000006
+      },
+      "2": {
+        "usr_pct": 18.25,
+        "sys_pct": 0.18,
+        "iowait_pct": 0.84,
+        "idle_pct": 80.73,
+        "busy_pct": 19.269999999999996
+      },
+      "3": {
+        "usr_pct": 12.75,
+        "sys_pct": 0.16,
+        "iowait_pct": 0.6,
+        "idle_pct": 86.49,
+        "busy_pct": 13.510000000000005
+      },
+      "4": {
+        "usr_pct": 15.09,
+        "sys_pct": 0.17,
+        "iowait_pct": 0.65,
+        "idle_pct": 82.51,
+        "busy_pct": 17.489999999999995
+      },
+      "5": {
+        "usr_pct": 10.56,
+        "sys_pct": 0.14,
+        "iowait_pct": 0.64,
+        "idle_pct": 88.66,
+        "busy_pct": 11.340000000000003
+      },
+      "6": {
+        "usr_pct": 18.62,
+        "sys_pct": 0.13,
+        "iowait_pct": 0.62,
+        "idle_pct": 80.63,
+        "busy_pct": 19.370000000000005
+      },
+      "7": {
+        "usr_pct": 15.83,
+        "sys_pct": 0.15,
+        "iowait_pct": 0.67,
+        "idle_pct": 83.35,
+        "busy_pct": 16.650000000000006
+      },
+      "8": {
+        "usr_pct": 17.62,
+        "sys_pct": 0.16,
+        "iowait_pct": 0.68,
+        "idle_pct": 81.54,
+        "busy_pct": 18.459999999999994
+      },
+      "9": {
+        "usr_pct": 12.45,
+        "sys_pct": 0.14,
+        "iowait_pct": 0.6,
+        "idle_pct": 86.8,
+        "busy_pct": 13.200000000000003
+      },
+      "10": {
+        "usr_pct": 16.4,
+        "sys_pct": 0.17,
+        "iowait_pct": 0.68,
+        "idle_pct": 82.75,
+        "busy_pct": 17.25
+      },
+      "11": {
+        "usr_pct": 9.88,
+        "sys_pct": 0.17,
+        "iowait_pct": 0.67,
+        "idle_pct": 89.28,
+        "busy_pct": 10.719999999999999
+      }
+    }
+  },
+  "artifacts": {
+    "run_log": "baseline_logs/실험결과_10/workers=2/run.log",
+    "mpstat_log": "baseline_logs/실험결과_10/workers=2/mpstat.log",
+    "baseline_summary": "baseline_logs/실험결과_10/workers=2/baseline_logs/run_01_summary_(프로세스개수=2).json"
+  }
+}

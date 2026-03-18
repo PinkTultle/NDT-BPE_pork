@@ -1,0 +1,137 @@
+{
+  "slots": 1,
+  "ndp": {
+    "backend": "ndp",
+    "slots": 1,
+    "num_files": 80,
+    "total_bytes": 39771049984,
+    "total_segments": 303469,
+    "total_errors": 0,
+    "elapsed_s": 10488.662175234873,
+    "device_elapsed_s_sum": 10488.349317188477,
+    "throughput_MBps": 3.616155070358214,
+    "dev_path": "/dev/ng0n1",
+    "queue_depth": 64,
+    "max_inflight": 1,
+    "opcode": 212,
+    "nsid": 1,
+    "output_dir": "/mnt/nvme/openweb_bin_ndp/slots_1",
+    "per_file_csv": "ndp_logs/실험결과_1/slots=1/ndp_logs/run_01_per_file_(슬롯개수=1).csv"
+  },
+  "cpu": {
+    "logical_cpus": 12,
+    "avg_cpu_busy_pct_all": 8.560000000000002,
+    "avg_busy_core_equivalent": 1.0272000000000003,
+    "efficiency_pct_vs_slots": 100.0,
+    "per_cpu": {
+      "all": {
+        "usr_pct": 0.14,
+        "sys_pct": 0.18,
+        "iowait_pct": 8.23,
+        "idle_pct": 91.44,
+        "busy_pct": 8.560000000000002
+      },
+      "0": {
+        "usr_pct": 0.11,
+        "sys_pct": 0.35,
+        "iowait_pct": 33.05,
+        "idle_pct": 66.49,
+        "busy_pct": 33.510000000000005
+      },
+      "1": {
+        "usr_pct": 0.12,
+        "sys_pct": 0.33,
+        "iowait_pct": 27.69,
+        "idle_pct": 71.86,
+        "busy_pct": 28.14
+      },
+      "2": {
+        "usr_pct": 0.21,
+        "sys_pct": 0.17,
+        "iowait_pct": 4.64,
+        "idle_pct": 94.97,
+        "busy_pct": 5.030000000000001
+      },
+      "3": {
+        "usr_pct": 0.16,
+        "sys_pct": 0.16,
+        "iowait_pct": 2.83,
+        "idle_pct": 96.85,
+        "busy_pct": 3.1500000000000057
+      },
+      "4": {
+        "usr_pct": 0.13,
+        "sys_pct": 0.18,
+        "iowait_pct": 5.43,
+        "idle_pct": 94.15,
+        "busy_pct": 5.849999999999994
+      },
+      "5": {
+        "usr_pct": 0.13,
+        "sys_pct": 0.15,
+        "iowait_pct": 3.88,
+        "idle_pct": 95.84,
+        "busy_pct": 4.159999999999997
+      },
+      "6": {
+        "usr_pct": 0.1,
+        "sys_pct": 0.13,
+        "iowait_pct": 4.82,
+        "idle_pct": 94.95,
+        "busy_pct": 5.049999999999997
+      },
+      "7": {
+        "usr_pct": 0.14,
+        "sys_pct": 0.14,
+        "iowait_pct": 5.79,
+        "idle_pct": 93.93,
+        "busy_pct": 6.069999999999993
+      },
+      "8": {
+        "usr_pct": 0.11,
+        "sys_pct": 0.13,
+        "iowait_pct": 2.02,
+        "idle_pct": 97.74,
+        "busy_pct": 2.260000000000005
+      },
+      "9": {
+        "usr_pct": 0.11,
+        "sys_pct": 0.12,
+        "iowait_pct": 1.77,
+        "idle_pct": 98.0,
+        "busy_pct": 2.0
+      },
+      "10": {
+        "usr_pct": 0.16,
+        "sys_pct": 0.14,
+        "iowait_pct": 4.14,
+        "idle_pct": 95.57,
+        "busy_pct": 4.430000000000007
+      },
+      "11": {
+        "usr_pct": 0.16,
+        "sys_pct": 0.16,
+        "iowait_pct": 2.74,
+        "idle_pct": 96.94,
+        "busy_pct": 3.0600000000000023
+      }
+    }
+  },
+  "io": {
+    "device": "nvme0n1",
+    "sample_count": 10487,
+    "avg_read_MBps": 4.1323483837131686e-05,
+    "avg_write_MBps": 0.0008088827983455707,
+    "avg_total_MBps": 0.0008502062821827024,
+    "avg_r_await_ms": 0.0029198054734433107,
+    "avg_w_await_ms": 0.007750548297892629,
+    "avg_aqu_sz": 6.674930866787452e-06,
+    "avg_util_pct": 0.002307618956803662
+  },
+  "artifacts": {
+    "run_log": "ndp_logs/실험결과_1/slots=1/run.log",
+    "mpstat_log": "ndp_logs/실험결과_1/slots=1/mpstat.log",
+    "iostat_log": "ndp_logs/실험결과_1/slots=1/iostat.log",
+    "ndp_summary": "ndp_logs/실험결과_1/slots=1/ndp_logs/run_01_summary_(슬롯개수=1).json"
+  }
+}

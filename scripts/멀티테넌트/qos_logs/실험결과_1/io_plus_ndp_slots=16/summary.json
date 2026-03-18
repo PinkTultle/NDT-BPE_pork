@@ -1,0 +1,25 @@
+{
+  "scenario": "io_plus_ndp",
+  "fio": {
+    "read_bw_MBps": 106.30609130859375,
+    "write_bw_MBps": 0.0,
+    "total_bw_MBps": 106.30609130859375,
+    "read_iops": 27214.359521,
+    "write_iops": 0.0,
+    "total_iops": 27214.359521,
+    "read_p95_us": 1662.976,
+    "read_p99_us": 2211.84,
+    "write_p95_us": 0.0,
+    "write_p99_us": 0.0,
+    "elapsed_s": 60.35883532324806
+  },
+  "ndp": {
+    "loops": 1,
+    "files_processed": 1,
+    "total_bytes": 497774080,
+    "total_errors": 0,
+    "elapsed_s": 112.64113886794075,
+    "throughput_MBps": 4.214395914669328,
+    "slots": 16
+  }
+}

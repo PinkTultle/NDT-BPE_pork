@@ -1,0 +1,18 @@
+{
+  "backend": "ndp",
+  "slots": 1,
+  "num_files": 80,
+  "total_bytes": 39771049984,
+  "total_segments": 303469,
+  "total_errors": 0,
+  "elapsed_s": 10488.662175234873,
+  "device_elapsed_s_sum": 10488.349317188477,
+  "throughput_MBps": 3.616155070358214,
+  "dev_path": "/dev/ng0n1",
+  "queue_depth": 64,
+  "max_inflight": 1,
+  "opcode": 212,
+  "nsid": 1,
+  "output_dir": "/mnt/nvme/openweb_bin_ndp/slots_1",
+  "per_file_csv": "ndp_logs/실험결과_1/slots=1/ndp_logs/run_01_per_file_(슬롯개수=1).csv"
+}

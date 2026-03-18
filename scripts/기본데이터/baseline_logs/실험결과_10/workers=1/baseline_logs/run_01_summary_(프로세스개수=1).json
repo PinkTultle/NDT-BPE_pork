@@ -1,0 +1,17 @@
+{
+  "run_id": 1,
+  "timestamp": "2026-03-10T23:00:36",
+  "input_dir": "/mnt/nvme/openwebtext_disk",
+  "output_dir": "/mnt/nvme/openwebtext_bin",
+  "backend": "cpu",
+  "model": "/home/doogunwo/Desktop/NDT-BPE/storage/runtime/model/bbpe_tokenizer.json",
+  "threads": 1,
+  "cold_cache": true,
+  "files": 80,
+  "total_input_bytes": 39770898240,
+  "total_output_bytes": 41064060588,
+  "total_tokens": 10266015147,
+  "elapsed_s": 13276.590054460336,
+  "throughput_MBps": 2.85679410423253,
+  "throughput_tokens_per_s": 773241.8568991729
+}

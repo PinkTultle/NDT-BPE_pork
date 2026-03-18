@@ -8,10 +8,10 @@
 #include <sys/ipc.h>
 
 constexpr key_t SHM_READ_KEY = 0x1000;
-constexpr key_t SHM_WRITE_KEY = 0x1022;
+constexpr key_t SHM_WRITE_KEY = 0x1200;
 constexpr key_t MSG_KEY = 1002;
 constexpr std::size_t SHM_SIZE = 131072; // 128 KiB
-constexpr std::size_t NUM_SLOTS = 16;
+constexpr std::size_t NUM_SLOTS = 64;
 constexpr key_t STATS_SHM_KEY = 0x2000;
 constexpr std::size_t STATS_SHM_SIZE = 4096;
 

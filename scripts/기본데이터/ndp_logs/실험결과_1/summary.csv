@@ -1,0 +1,2 @@
+slots,elapsed_s,device_elapsed_s_sum,throughput_MBps,total_bytes,total_segments,total_errors,avg_cpu_busy_pct_all,avg_busy_core_equivalent,efficiency_pct_vs_slots,io_total_MBps,io_read_MBps,io_write_MBps,io_util_pct,io_r_await_ms,io_w_await_ms,io_aqu_sz
+1,10488.662175234873,10488.349317188477,3.616155070358214,39771049984,303469,0,8.560000000000002,1.0272000000000003,100.0,0.0008502062821827024,4.1323483837131686e-05,0.0008088827983455707,0.002307618956803662,0.0029198054734433107,0.007750548297892629,6.674930866787452e-06

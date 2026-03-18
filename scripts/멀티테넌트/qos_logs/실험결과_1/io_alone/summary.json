@@ -1,0 +1,16 @@
+{
+  "scenario": "io_alone",
+  "fio": {
+    "read_bw_MBps": 110.78211402893066,
+    "write_bw_MBps": 0.0,
+    "total_bw_MBps": 110.78211402893066,
+    "read_iops": 28360.221326,
+    "write_iops": 0.0,
+    "total_iops": 28360.221326,
+    "read_p95_us": 1155.072,
+    "read_p99_us": 1204.224,
+    "write_p95_us": 0.0,
+    "write_p99_us": 0.0,
+    "elapsed_s": 100.28504503611475
+  }
+}

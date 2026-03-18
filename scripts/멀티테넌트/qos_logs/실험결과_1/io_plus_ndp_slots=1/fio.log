@@ -1,0 +1,1 @@
+$ /usr/bin/fio --output-format=json --output=qos_logs/실험결과_1/io_plus_ndp_slots=1/fio.json sample_io_tenant.fio

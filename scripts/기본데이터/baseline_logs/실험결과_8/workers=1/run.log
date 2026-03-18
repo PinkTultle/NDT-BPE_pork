@@ -1,0 +1,28 @@
+=== RUN START 2026-03-10T12:48:47 ===
+$ /home/doogunwo/Desktop/NDT-BPE/scripts/.venv/bin/python3 /home/doogunwo/Desktop/NDT-BPE/scripts/ndt-bpe_baseline.py --backend cpu --input-dir /mnt/nvme/openwebtext_disk --output-dir /mnt/nvme/openwebtext_bin --threads 1 --repeat 1 --stats-dir baseline_logs/실험결과_8/workers=1/baseline_logs --result-suffix _(프로세스개수=1) --arrow-text-column text
+
+experiment_condition:
+  backend=cpu
+  model=/home/doogunwo/Desktop/NDT-BPE/storage/runtime/model/bbpe_tokenizer.json
+  input_dir=/mnt/nvme/openwebtext_disk
+  output_dir=/mnt/nvme/openwebtext_bin
+  pipeline=read+tokenize+bin_write
+  file_filter=['.arrow', '.text', '.txt']
+  arrow_text_column=text
+  parallelism=file_level_processes(1)
+  cold_cache=True
+  progress=on
+  repeat=1
+Traceback (most recent call last):
+  File "/home/doogunwo/Desktop/NDT-BPE/scripts/ndt-bpe_baseline.py", line 531, in <module>
+    main()
+  File "/home/doogunwo/Desktop/NDT-BPE/scripts/ndt-bpe_baseline.py", line 497, in main
+    summary, rows = run_once(
+                    ^^^^^^^^^
+  File "/home/doogunwo/Desktop/NDT-BPE/scripts/ndt-bpe_baseline.py", line 281, in run_once
+    drop_linux_page_cache()
+  File "/home/doogunwo/Desktop/NDT-BPE/scripts/ndt-bpe_baseline.py", line 104, in drop_linux_page_cache
+    Path("/proc/sys/vm/drop_caches").write_text("3\n", encoding="ascii")
+  File "/usr/lib/python3.12/pathlib.py", line 1049, in write_text
+    with self.open(mode='w', encoding=encoding, errors=errors, newline=newline) as f:
+KeyboardInterrupt

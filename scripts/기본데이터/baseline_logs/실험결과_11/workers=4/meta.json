@@ -1,0 +1,28 @@
+{
+  "timestamp": "2026-03-12T05:58:53",
+  "workers": 4,
+  "backend": "cpu",
+  "input_dir": "/mnt/nvme/openwebtext_disk",
+  "output_dir": "/mnt/nvme/openwebtext_bin",
+  "model": "../storage/runtime/model/bbpe_tokenizer.json",
+  "cmd": [
+    "/home/doogunwo/Desktop/NDT-BPE/scripts/.venv/bin/python3",
+    "/home/doogunwo/Desktop/NDT-BPE/scripts/ndt-bpe_baseline.py",
+    "--backend",
+    "cpu",
+    "--input-dir",
+    "/mnt/nvme/openwebtext_disk",
+    "--output-dir",
+    "/mnt/nvme/openwebtext_bin",
+    "--threads",
+    "4",
+    "--repeat",
+    "1",
+    "--stats-dir",
+    "baseline_logs/실험결과_11/workers=4/baseline_logs",
+    "--result-suffix",
+    "_(프로세스개수=4)",
+    "--arrow-text-column",
+    "text"
+  ]
+}

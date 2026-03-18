@@ -1,0 +1,309 @@
+{
+  "io_alone": {
+    "read_bw_MBps": 110.78211402893066,
+    "write_bw_MBps": 0.0,
+    "total_bw_MBps": 110.78211402893066,
+    "read_iops": 28360.221326,
+    "write_iops": 0.0,
+    "total_iops": 28360.221326,
+    "read_p95_us": 1155.072,
+    "read_p99_us": 1204.224,
+    "write_p95_us": 0.0,
+    "write_p99_us": 0.0,
+    "elapsed_s": 100.28504503611475
+  },
+  "io_plus_ndp_runs": [
+    {
+      "scenario": "io_plus_ndp",
+      "fio": {
+        "read_bw_MBps": 106.97273540496826,
+        "write_bw_MBps": 0.0,
+        "total_bw_MBps": 106.97273540496826,
+        "read_iops": 27385.020499,
+        "write_iops": 0.0,
+        "total_iops": 27385.020499,
+        "read_p95_us": 1630.208,
+        "read_p99_us": 2211.84,
+        "write_p95_us": 0.0,
+        "write_p99_us": 0.0,
+        "elapsed_s": 60.352099982090294
+      },
+      "ndp": {
+        "loops": 1,
+        "files_processed": 1,
+        "total_bytes": 497774080,
+        "total_errors": 0,
+        "elapsed_s": 125.90717980172485,
+        "throughput_MBps": 3.7703517481395186,
+        "slots": 1
+      }
+    },
+    {
+      "scenario": "io_plus_ndp",
+      "fio": {
+        "read_bw_MBps": 106.34209251403809,
+        "write_bw_MBps": 0.0,
+        "total_bw_MBps": 106.34209251403809,
+        "read_iops": 27223.575881,
+        "write_iops": 0.0,
+        "total_iops": 27223.575881,
+        "read_p95_us": 1662.976,
+        "read_p99_us": 2211.84,
+        "write_p95_us": 0.0,
+        "write_p99_us": 0.0,
+        "elapsed_s": 60.37108191102743
+      },
+      "ndp": {
+        "loops": 1,
+        "files_processed": 1,
+        "total_bytes": 497774080,
+        "total_errors": 0,
+        "elapsed_s": 113.41767961205915,
+        "throughput_MBps": 4.18554106460732,
+        "slots": 2
+      }
+    },
+    {
+      "scenario": "io_plus_ndp",
+      "fio": {
+        "read_bw_MBps": 106.31344795227051,
+        "write_bw_MBps": 0.0,
+        "total_bw_MBps": 106.31344795227051,
+        "read_iops": 27216.242792,
+        "write_iops": 0.0,
+        "total_iops": 27216.242792,
+        "read_p95_us": 1662.976,
+        "read_p99_us": 2211.84,
+        "write_p95_us": 0.0,
+        "write_p99_us": 0.0,
+        "elapsed_s": 60.353480357676744
+      },
+      "ndp": {
+        "loops": 1,
+        "files_processed": 1,
+        "total_bytes": 497774080,
+        "total_errors": 0,
+        "elapsed_s": 112.59792329603806,
+        "throughput_MBps": 4.216013418121839,
+        "slots": 4
+      }
+    },
+    {
+      "scenario": "io_plus_ndp",
+      "fio": {
+        "read_bw_MBps": 106.29977607727051,
+        "write_bw_MBps": 0.0,
+        "total_bw_MBps": 106.29977607727051,
+        "read_iops": 27212.742909,
+        "write_iops": 0.0,
+        "total_iops": 27212.742909,
+        "read_p95_us": 1662.976,
+        "read_p99_us": 2211.84,
+        "write_p95_us": 0.0,
+        "write_p99_us": 0.0,
+        "elapsed_s": 60.35820574592799
+      },
+      "ndp": {
+        "loops": 1,
+        "files_processed": 1,
+        "total_bytes": 497774080,
+        "total_errors": 0,
+        "elapsed_s": 112.66908288188279,
+        "throughput_MBps": 4.213350666628034,
+        "slots": 8
+      }
+    },
+    {
+      "scenario": "io_plus_ndp",
+      "fio": {
+        "read_bw_MBps": 106.30609130859375,
+        "write_bw_MBps": 0.0,
+        "total_bw_MBps": 106.30609130859375,
+        "read_iops": 27214.359521,
+        "write_iops": 0.0,
+        "total_iops": 27214.359521,
+        "read_p95_us": 1662.976,
+        "read_p99_us": 2211.84,
+        "write_p95_us": 0.0,
+        "write_p99_us": 0.0,
+        "elapsed_s": 60.35883532324806
+      },
+      "ndp": {
+        "loops": 1,
+        "files_processed": 1,
+        "total_bytes": 497774080,
+        "total_errors": 0,
+        "elapsed_s": 112.64113886794075,
+        "throughput_MBps": 4.214395914669328,
+        "slots": 16
+      }
+    }
+  ],
+  "compare_rows": [
+    {
+      "slots": 1,
+      "fio": {
+        "read_bw_MBps": 106.97273540496826,
+        "write_bw_MBps": 0.0,
+        "total_bw_MBps": 106.97273540496826,
+        "read_iops": 27385.020499,
+        "write_iops": 0.0,
+        "total_iops": 27385.020499,
+        "read_p95_us": 1630.208,
+        "read_p99_us": 2211.84,
+        "write_p95_us": 0.0,
+        "write_p99_us": 0.0,
+        "elapsed_s": 60.352099982090294
+      },
+      "ndp": {
+        "loops": 1,
+        "files_processed": 1,
+        "total_bytes": 497774080,
+        "total_errors": 0,
+        "elapsed_s": 125.90717980172485,
+        "throughput_MBps": 3.7703517481395186,
+        "slots": 1
+      },
+      "degradation": {
+        "bw_ratio": 0.9656137756771135,
+        "iops_ratio": 0.9656137793922659,
+        "read_p99_inflation": 1.8367346938775513,
+        "write_p99_inflation": 0.0,
+        "read_p95_inflation": 1.4113475177304966,
+        "write_p95_inflation": 0.0
+      }
+    },
+    {
+      "slots": 2,
+      "fio": {
+        "read_bw_MBps": 106.34209251403809,
+        "write_bw_MBps": 0.0,
+        "total_bw_MBps": 106.34209251403809,
+        "read_iops": 27223.575881,
+        "write_iops": 0.0,
+        "total_iops": 27223.575881,
+        "read_p95_us": 1662.976,
+        "read_p99_us": 2211.84,
+        "write_p95_us": 0.0,
+        "write_p99_us": 0.0,
+        "elapsed_s": 60.37108191102743
+      },
+      "ndp": {
+        "loops": 1,
+        "files_processed": 1,
+        "total_bytes": 497774080,
+        "total_errors": 0,
+        "elapsed_s": 113.41767961205915,
+        "throughput_MBps": 4.18554106460732,
+        "slots": 2
+      },
+      "degradation": {
+        "bw_ratio": 0.9599211338959187,
+        "iops_ratio": 0.9599211363009376,
+        "read_p99_inflation": 1.8367346938775513,
+        "write_p99_inflation": 0.0,
+        "read_p95_inflation": 1.4397163120567378,
+        "write_p95_inflation": 0.0
+      }
+    },
+    {
+      "slots": 4,
+      "fio": {
+        "read_bw_MBps": 106.31344795227051,
+        "write_bw_MBps": 0.0,
+        "total_bw_MBps": 106.31344795227051,
+        "read_iops": 27216.242792,
+        "write_iops": 0.0,
+        "total_iops": 27216.242792,
+        "read_p95_us": 1662.976,
+        "read_p99_us": 2211.84,
+        "write_p95_us": 0.0,
+        "write_p99_us": 0.0,
+        "elapsed_s": 60.353480357676744
+      },
+      "ndp": {
+        "loops": 1,
+        "files_processed": 1,
+        "total_bytes": 497774080,
+        "total_errors": 0,
+        "elapsed_s": 112.59792329603806,
+        "throughput_MBps": 4.216013418121839,
+        "slots": 4
+      },
+      "degradation": {
+        "bw_ratio": 0.9596625672309055,
+        "iops_ratio": 0.959662566774427,
+        "read_p99_inflation": 1.8367346938775513,
+        "write_p99_inflation": 0.0,
+        "read_p95_inflation": 1.4397163120567378,
+        "write_p95_inflation": 0.0
+      }
+    },
+    {
+      "slots": 8,
+      "fio": {
+        "read_bw_MBps": 106.29977607727051,
+        "write_bw_MBps": 0.0,
+        "total_bw_MBps": 106.29977607727051,
+        "read_iops": 27212.742909,
+        "write_iops": 0.0,
+        "total_iops": 27212.742909,
+        "read_p95_us": 1662.976,
+        "read_p99_us": 2211.84,
+        "write_p95_us": 0.0,
+        "write_p99_us": 0.0,
+        "elapsed_s": 60.35820574592799
+      },
+      "ndp": {
+        "loops": 1,
+        "files_processed": 1,
+        "total_bytes": 497774080,
+        "total_errors": 0,
+        "elapsed_s": 112.66908288188279,
+        "throughput_MBps": 4.213350666628034,
+        "slots": 8
+      },
+      "degradation": {
+        "bw_ratio": 0.9595391549353391,
+        "iops_ratio": 0.959539158604943,
+        "read_p99_inflation": 1.8367346938775513,
+        "write_p99_inflation": 0.0,
+        "read_p95_inflation": 1.4397163120567378,
+        "write_p95_inflation": 0.0
+      }
+    },
+    {
+      "slots": 16,
+      "fio": {
+        "read_bw_MBps": 106.30609130859375,
+        "write_bw_MBps": 0.0,
+        "total_bw_MBps": 106.30609130859375,
+        "read_iops": 27214.359521,
+        "write_iops": 0.0,
+        "total_iops": 27214.359521,
+        "read_p95_us": 1662.976,
+        "read_p99_us": 2211.84,
+        "write_p95_us": 0.0,
+        "write_p99_us": 0.0,
+        "elapsed_s": 60.35883532324806
+      },
+      "ndp": {
+        "loops": 1,
+        "files_processed": 1,
+        "total_bytes": 497774080,
+        "total_errors": 0,
+        "elapsed_s": 112.64113886794075,
+        "throughput_MBps": 4.214395914669328,
+        "slots": 16
+      },
+      "degradation": {
+        "bw_ratio": 0.9595961608101466,
+        "iops_ratio": 0.9595961614040895,
+        "read_p99_inflation": 1.8367346938775513,
+        "write_p99_inflation": 0.0,
+        "read_p95_inflation": 1.4397163120567378,
+        "write_p95_inflation": 0.0
+      }
+    }
+  ]
+}

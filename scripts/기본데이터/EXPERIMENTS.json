@@ -1,0 +1,107 @@
+{
+  "dataset_group": "기본데이터",
+  "dataset_root": "/mnt/nvme/openwebtext_disk",
+  "description": "기본데이터 폴더의 스크립트는 OpenWebText Arrow 샤드 전체를 대상으로 CPU baseline과 NDP offload의 end-to-end 토크나이제이션 성능을 측정한다.",
+  "common_conditions": {
+    "input_format": "Arrow shards (*.arrow)",
+    "output_format": "int32 little-endian .bin",
+    "measurement_scope": "read + tokenize + bin write",
+    "cache_policy": "각 run 시작 전에 cold-cache 적용",
+    "collected_metrics": [
+      "elapsed_s",
+      "throughput_MBps",
+      "throughput_tokens_per_s",
+      "avg_cpu_busy_pct_all",
+      "avg_busy_core_equivalent",
+      "io_total_MBps",
+      "io_util_pct",
+      "io_r_await_ms",
+      "io_w_await_ms"
+    ]
+  },
+  "experiments": [
+    {
+      "name": "cpu_baseline_process_sweep",
+      "script": "test/NDT-BPE/scripts/기본데이터/run_ndt_baseline_sweep.py",
+      "worker_script": "test/NDT-BPE/scripts/기본데이터/ndt-bpe_baseline.py",
+      "what_it_measures": "CPU 멀티프로세스 baseline의 전체 처리시간, 처리량, CPU 사용량, I/O 포화 지점",
+      "parallelism_unit": "file-level processes",
+      "sweep_parameter": "workers",
+      "default_sweep_values": [
+        1,
+        2,
+        4,
+        16,
+        32,
+        64
+      ],
+      "input": {
+        "path": "/mnt/nvme/openwebtext_disk",
+        "filter": [
+          ".arrow",
+          ".text",
+          ".txt"
+        ],
+        "arrow_text_column": "text"
+      },
+      "output": {
+        "bin_root": "/mnt/nvme/openweb_bin",
+        "log_root": "test/NDT-BPE/scripts/기본데이터/baseline_logs"
+      },
+      "artifacts": [
+        "실험결과_N/summary.csv",
+        "실험결과_N/workers=N/run.log",
+        "실험결과_N/workers=N/mpstat.log",
+        "실험결과_N/workers=N/iostat.log",
+        "실험결과_N/workers=N/summary.json",
+        "실험결과_N/workers=N/baseline_logs/run_01_per_file_(프로세스개수=N).csv",
+        "실험결과_N/workers=N/baseline_logs/run_01_summary_(프로세스개수=N).json"
+      ]
+    },
+    {
+      "name": "ndp_slot_sweep",
+      "script": "test/NDT-BPE/scripts/기본데이터/run_ndt_bpe_sweep.py",
+      "what_it_measures": "NDP offload 경로의 전체 처리시간, 처리량, CPU 사용량, I/O 사용량, 슬롯 수 증가에 따른 확장성",
+      "parallelism_unit": "single process + NDP slots",
+      "sweep_parameter": "slots",
+      "default_sweep_values": [
+        1,
+        2,
+        4,
+        8,
+        16,
+        32,
+        64
+      ],
+      "input": {
+        "path": "/mnt/nvme/openwebtext_disk",
+        "glob": "*.arrow"
+      },
+      "output": {
+        "bin_root": "/mnt/nvme/openweb_bin_ndp",
+        "device": "/dev/ng0n1",
+        "log_root": "test/NDT-BPE/scripts/기본데이터/ndp_logs"
+      },
+      "artifacts": [
+        "실험결과_N/summary.csv",
+        "실험결과_N/slots=N/run.log",
+        "실험결과_N/slots=N/mpstat.log",
+        "실험결과_N/slots=N/iostat.log",
+        "실험결과_N/slots=N/summary.json",
+        "실험결과_N/slots=N/ndp_logs/run_01_per_file_(슬롯개수=N).csv",
+        "실험결과_N/slots=N/ndp_logs/run_01_summary_(슬롯개수=N).json"
+      ]
+    }
+  ],
+  "comparison_intent": {
+    "goal": "동일 입력과 동일 산출물 기준으로 CPU baseline과 NDP offload의 성능 및 자원 효율을 비교한다.",
+    "primary_comparison_axes": [
+      "throughput_MBps",
+      "throughput_tokens_per_s",
+      "elapsed_s",
+      "avg_busy_core_equivalent",
+      "io_total_MBps",
+      "io_util_pct"
+    ]
+  }
+}

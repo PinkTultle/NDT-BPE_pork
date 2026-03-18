@@ -1,0 +1,9 @@
+{
+  "loops": 1,
+  "files_processed": 1,
+  "total_bytes": 497774080,
+  "total_errors": 0,
+  "elapsed_s": 112.66908288188279,
+  "throughput_MBps": 4.213350666628034,
+  "slots": 8
+}

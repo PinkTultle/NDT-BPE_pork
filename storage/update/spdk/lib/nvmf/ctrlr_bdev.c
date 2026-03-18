@@ -29,10 +29,10 @@
 #include <sys/time.h>
 
 #define SHM_READ_KEY 0x1000
-#define SHM_WRITE_KEY 0x1022
+#define SHM_WRITE_KEY 0x1200
 #define MSG_KEY                 1002  //  SPDK Mock과 동일한 키 사용
 #define SHM_SIZE                131072 // 공유 메모리 크기 
-#define NUM_SLOTS    16 
+#define NUM_SLOTS    64 
 
 /* 25.01-pre compatibility: PRCHK mask not defined */
 #ifndef SPDK_NVME_IO_FLAGS_PRCHK_MASK

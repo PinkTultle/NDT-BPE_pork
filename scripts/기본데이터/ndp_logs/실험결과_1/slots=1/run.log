@@ -1,0 +1,3 @@
+=== RUN START 2026-03-16T00:11:46 ===
+dev_path=/dev/ng0n1 slots=1 queue_depth=64 max_inflight=1 input_files=80
+=== RUN END 2026-03-16T03:06:34 elapsed_wall_s=10488.662 total_bytes=39771049984 segments=303469 errors=0 ===
