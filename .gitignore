@@ -51,3 +51,8 @@ venv/
 __pycache__/
 *.pyc
 
+# 실험 로그/결과
+scripts/기본데이터/baseline_logs/
+scripts/기본데이터/ndp_logs/
+scripts/멀티테넌트/qos_logs/
+scripts/**/실험결과_*/
