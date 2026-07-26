@@ -1,4 +1,6 @@
 # NDT-BPE — Claude Code 프로젝트 규칙
+> 기반: ai-dev-toolkit v0.5.0
+>
 > 위치: `<프로젝트 루트>/CLAUDE.md`
 > 글로벌 규칙(`~/.claude/CLAUDE.md`)을 상속하며, 이 파일에서 오버라이드/추가합니다.
 
@@ -163,15 +165,23 @@ git submodule update --init --recursive
 
 ---
 
-## 7. 구현 문서 산출 위치
+## 7. 산출물 및 지침 디렉토리
 
 ```
-docs/impl/
-├── YYYYMMDD_기능명.md     # 구현 완료 후 자동 산출
-└── README.md              # 문서 인덱스
+docs/
+├── artifacts/           ← 작업 단위 산출물 (번호.작업명.md)
+│   ├── ideation/        ← 아이디어 구체화
+│   ├── design/          ← 설계 계획서
+│   ├── review/          ← 설계 검토 기록
+│   ├── summary/         ← 구현 요약
+│   └── test-report/     ← 테스트 결과
+├── stack/               ← 기술 스택별 지침 (언어/프레임워크명.md)
+└── source/              ← 코드 설명 문서 (소스 트리 미러링)
 ```
 
-문서 형식은 글로벌 규칙 **3.3절** 형식을 따릅니다.
+- `artifacts/` 파일명: `<번호>.<작업명>.md` — 상세 규칙은 글로벌 규칙 참조
+- `stack/` : blueprints를 프로젝트에 맞게 마이그레이션한 기술 지침 + 로컬 패턴
+- `source/` : 코드 파일과 1:1 대응하는 설명 문서
 
 ---
 

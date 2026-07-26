@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -f*)",
+      "Bash(git checkout -- .)",
+      "Bash(git restore .)",
+      "Bash(git branch -D*)",
+      "Bash(git stash drop*)",
+      "Bash(git stash clear*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/post-edit-check.sh $CLAUDE_FILE_PATH"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[info] Claude 응답 완료'"
+          }
+        ]
+      }
+    ]
+  }
+}
