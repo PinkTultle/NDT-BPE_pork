@@ -5,20 +5,18 @@ description: "Git 워크플로우 — 브랜치 전략, Conventional Commits, Wo
 
 # Git 워크플로우
 
-> 원본: `blueprints/git-workflow.md`
-> 프로젝트 rules 템플릿 — `/adt:project-configure`가 프로젝트에 맞게 커스터마이즈하여 복제
+> 원본: `blueprints/git-workflow.md` (ai-dev-toolkit) — 이 프로젝트에 맞게 조정됨
 
 ## 1. 브랜치 전략
 
 ```
-main          → 배포/릴리즈 (직접 push 금지)
-develop       → 통합 브랜치
-feature/xxx   → 기능 개발
-fix/xxx       → 버그 수정
-refactor/xxx  → 리팩토링
-docs/xxx      → 문서
-chore/xxx     → 빌드/툴링
+main          → 현재 유일한 브랜치 (학습용 fork). 소규모 변경은 직접 커밋
+feature/xxx   → 기능 추가/실험 시 분기
+study/xxx     → 코드 분석/학습 노트용 (필요 시)
 ```
+
+`develop` 브랜치는 사용하지 않는다.
+브랜치 구조가 이 파일과 `CLAUDE.md` §6에서 어긋나면 **`CLAUDE.md`가 우선**한다.
 
 ## 2. 커밋 메시지 컨벤션 (Conventional Commits)
 
